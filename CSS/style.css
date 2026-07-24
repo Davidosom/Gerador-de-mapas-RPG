@@ -169,7 +169,8 @@ header h1 { font-size: 1.4rem; color: var(--accent); }
 }
 
 /* Modo compacto: rail estreito só de ícones, com a tecla de atalho como um
-   selinho abaixo do ícone (nunca sobre ele) — em vez do texto por extenso. */
+   selinho ao lado do ícone (ícone à esquerda, tecla à direita) — em vez do
+   texto por extenso. */
 .sidebar-right.compact { width: 68px; min-width: 68px; max-width: 68px; }
 .sidebar-right.compact .sidebar-resize-handle { display: none; }
 .sidebar-right.compact .sidebar-right-header { justify-content: center; }
@@ -184,11 +185,12 @@ header h1 { font-size: 1.4rem; color: var(--accent); }
 
 .sidebar-right.compact .tools button,
 .sidebar-right.compact .layers button {
-  flex-direction: column;
+  flex-direction: row;
   justify-content: center;
-  gap: 3px;
-  padding: 8px 2px;
-  min-height: 52px;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px;
+  min-height: 36px;
 }
 .sidebar-right.compact .tool-label { display: none; }
 .sidebar-right.compact .tool-icon,
