@@ -827,6 +827,71 @@ function initCompactToolsToggle() {
   });
 }
 
+// ================= LAYOUT MOBILE (HAMBÚRGUER + SIDEBARS EM OVERLAY) =================
+// Abaixo de MOBILE_BREAKPOINT, as 3 sidebars somadas não cabem na tela (era o que
+// causava o mapa ficar inacessível no layout empilhado antigo) — então elas ficam
+// ocultas por padrão e só aparecem como overlay em tela cheia, uma de cada vez,
+// acionadas pela barra de ícones; a toolbar do cabeçalho vira um dropdown por trás
+// do botão ☰. Ver CSS "RESPONSIVO (MOBILE)" em style.css.
+function initMobileLayout() {
+  const MOBILE_BREAKPOINT = 900;
+  const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+  const toolbar = document.querySelector('.toolbar');
+  const menuBtn = document.getElementById('mobileMenuToggle');
+  const toggleBar = document.getElementById('mobileSidebarToggles');
+  const asides = {
+    chatSidebar: document.getElementById('chatSidebar'),
+    leftSidebar: document.getElementById('leftSidebar'),
+    rightSidebar: document.getElementById('rightSidebar')
+  };
+  if (!toolbar || !menuBtn || !toggleBar) return;
+
+  function closeAllOverlays() {
+    toolbar.classList.remove('mobile-open');
+    menuBtn.classList.remove('mobile-open');
+    Object.values(asides).forEach(a => a && a.classList.remove('mobile-open'));
+    toggleBar.querySelectorAll('button.active').forEach(b => b.classList.remove('active'));
+  }
+
+  function applyMode(isMobile) {
+    document.body.classList.toggle('mobile-layout', isMobile);
+    if (!isMobile) closeAllOverlays(); // volta de mobile pra desktop não deixa nada "preso" em tela cheia
+  }
+  applyMode(mql.matches);
+  mql.addEventListener('change', e => applyMode(e.matches));
+
+  menuBtn.addEventListener('click', () => {
+    const opening = !toolbar.classList.contains('mobile-open');
+    closeAllOverlays();
+    if (opening) {
+      toolbar.classList.add('mobile-open');
+      menuBtn.classList.add('mobile-open');
+    }
+  });
+
+  toggleBar.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-mobile-target]');
+    if (!btn) return;
+    const aside = asides[btn.dataset.mobileTarget];
+    if (!aside) return;
+    const opening = !aside.classList.contains('mobile-open');
+    closeAllOverlays();
+    if (!opening) return; // já estava aberta -> o toque fechou, só isso
+
+    // Chat recolhido (tira de 30px, ver .chat-sidebar.collapsed) precisa reabrir o
+    // painel antes, senão o overlay mostraria só a tira em vez do chat inteiro.
+    if (btn.dataset.mobileTarget === 'chatSidebar') {
+      const panel = aside.querySelector('.panel[data-panel="chat"]');
+      if (panel && panel.classList.contains('collapsed')) {
+        panel.querySelector(':scope > .panel-header')?.click();
+      }
+    }
+
+    aside.classList.add('mobile-open');
+    btn.classList.add('active');
+  });
+}
+
 // ================= TILESETS EXPANSÍVEIS =================
 function initTileset() {
   const container = document.getElementById('tilesetContainer');
@@ -1147,13 +1212,38 @@ function updateMapSizeInputs() {
 function initCanvasEvents() {
   canvas.oncontextmenu = (e) => e.preventDefault();
   // Remove listeners antigos se existirem (evita duplicação)
-  canvas.removeEventListener('mousedown', handleMouseDown);
-  canvas.removeEventListener('mousemove', handleMouseMove);
-  canvas.removeEventListener('mouseup', handleMouseUp);
+  canvas.removeEventListener('pointerdown', handlePointerDown);
+  canvas.removeEventListener('pointermove', handlePointerMove);
+  canvas.removeEventListener('pointerup', handlePointerUp);
+  canvas.removeEventListener('pointercancel', handlePointerCancel);
   canvas.removeEventListener('dblclick', handleDblClick);
 
-  function handleMouseDown(e) {
+  // Termina um arraste de objeto em andamento e sincroniza a posição final com a
+  // sala (extraído pra ser reaproveitado tanto no soltar normal quanto na limpeza
+  // de segurança de pointerup/pointercancel abaixo).
+  function finishDragging() {
+    const draggedObj = state.draggedObjectIndex !== null ? state.objects[state.draggedObjectIndex] : null;
+    state.isDragging = false;
+    state.draggedObjectIndex = null;
+
+    if (draggedObj && state.dragGroupStart && state.dragGroupStart.length > 1) {
+      const moves = state.dragGroupStart
+        .map(({ id }) => state.objects.find(o => o.id === id))
+        .filter(Boolean)
+        .map(o => ({ id: o.id, x: o.x, y: o.y }));
+      Room.syncObjectsMove(moves);
+    } else if (draggedObj) {
+      Room.syncObjectMove(draggedObj.id, draggedObj.x, draggedObj.y);
+    }
+    state.dragGroupStart = null;
+  }
+
+  function handlePointerDown(e) {
     e.preventDefault();
+    // Garante que mousemove/mouseup continuem chegando no canvas mesmo se o dedo/
+    // cursor sair da área dele durante o arraste (essencial pra toque, já que não
+    // existe um "window-level pointermove" equivalente ao antigo fallback de mouse).
+    canvas.setPointerCapture(e.pointerId);
     const pos = getMousePos(e);
 
     // Botão direito: limpa a prévia de Área de Efeito (com a ferramenta ativa, ou se
@@ -1266,7 +1356,7 @@ function initCanvasEvents() {
     paint(e);
   }
 
-  function handleMouseMove(e) {
+  function handlePointerMove(e) {
     if (viewMode?.active && !viewMode.isPanning && !state.isDrawingAoE && !state.isDragging) {
       const hoverPos = getMousePos(e);
       viewMode.updateHover(hoverPos.x, hoverPos.y);
@@ -1319,7 +1409,8 @@ function initCanvasEvents() {
     paint(e);
   }
 
-  function handleMouseUp() {
+  function handlePointerUp(e) {
+    if (canvas.hasPointerCapture?.(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
     if (state.camera.isPanning) {
       state.camera.isPanning = false;
       canvas.style.cursor = 'crosshair';
@@ -1356,20 +1447,7 @@ function initCanvasEvents() {
       return;
     }
     if (state.isDragging) {
-      const draggedObj = state.draggedObjectIndex !== null ? state.objects[state.draggedObjectIndex] : null;
-      state.isDragging = false;
-      state.draggedObjectIndex = null;
-
-      if (draggedObj && state.dragGroupStart && state.dragGroupStart.length > 1) {
-        const moves = state.dragGroupStart
-          .map(({ id }) => state.objects.find(o => o.id === id))
-          .filter(Boolean)
-          .map(o => ({ id: o.id, x: o.x, y: o.y }));
-        Room.syncObjectsMove(moves);
-      } else if (draggedObj) {
-        Room.syncObjectMove(draggedObj.id, draggedObj.x, draggedObj.y);
-      }
-      state.dragGroupStart = null;
+      finishDragging();
       render(); // valores (nome/HP/tooltip) voltam a aparecer assim que solta
       return;
     }
@@ -1410,12 +1488,12 @@ function initCanvasEvents() {
     openFrameEditor(frame);
   }
 
-  canvas.addEventListener('mousedown', handleMouseDown);
-  canvas.addEventListener('mousemove', handleMouseMove);
-  canvas.addEventListener('mouseup', handleMouseUp);
-  canvas.addEventListener('dblclick', handleDblClick);
-
-  window.addEventListener('mouseup', () => {
+  // Limpeza de segurança compartilhada entre o pointerup no nível de window (botão/
+  // dedo solto fora do canvas) e pointercancel (toque interrompido pelo SO/navegador
+  // antes de disparar pointerup — não tinha equivalente no mouse, então isDragging
+  // nunca era resetado aqui antes: um arraste de objeto solto fora do canvas podia
+  // ficar "preso"; corrigido incluindo o finishDragging() abaixo).
+  function handlePointerSafetyCleanup() {
     if (state.isDrawing) state.isDrawing = false;
     if (state.isDrawingAoE) state.isDrawingAoE = false;
     if (state.isMarqueeSelecting) {
@@ -1436,8 +1514,25 @@ function initCanvasEvents() {
       state.shapeEnd = null;
       render();
     }
-  });
-  canvas.addEventListener('mouseleave', () => {
+    if (state.isDragging) {
+      finishDragging();
+      render();
+    }
+  }
+
+  function handlePointerCancel(e) {
+    if (canvas.hasPointerCapture?.(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+    handlePointerSafetyCleanup();
+  }
+
+  canvas.addEventListener('pointerdown', handlePointerDown);
+  canvas.addEventListener('pointermove', handlePointerMove);
+  canvas.addEventListener('pointerup', handlePointerUp);
+  canvas.addEventListener('pointercancel', handlePointerCancel);
+  canvas.addEventListener('dblclick', handleDblClick);
+
+  window.addEventListener('pointerup', handlePointerSafetyCleanup);
+  canvas.addEventListener('pointerleave', () => {
     state.isDrawing = false;
   });
 }
@@ -4016,20 +4111,20 @@ function refreshFramePreviewFromForm() {
 function makeDraggable(element) {
   let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
   const header = element.querySelector('.frame-editor-header');
-  
+
   if (header) {
-    header.onmousedown = dragMouseDown;
+    header.onpointerdown = dragPointerDown;
   }
-  
-  function dragMouseDown(e) {
+
+  function dragPointerDown(e) {
     if (e.target.closest('button') || e.target.closest('input') || e.target.closest('select')) return;
     e.preventDefault();
     pos3 = e.clientX;
     pos4 = e.clientY;
-    document.onmouseup = closeDragElement;
-    document.onmousemove = elementDrag;
+    document.onpointerup = closeDragElement;
+    document.onpointermove = elementDrag;
   }
-  
+
   function elementDrag(e) {
     e.preventDefault();
     pos1 = pos3 - e.clientX;
@@ -4039,10 +4134,10 @@ function makeDraggable(element) {
     element.style.top = (element.offsetTop - pos2) + "px";
     element.style.left = (element.offsetLeft - pos1) + "px";
   }
-  
+
   function closeDragElement() {
-    document.onmouseup = null;
-    document.onmousemove = null;
+    document.onpointerup = null;
+    document.onpointermove = null;
   }
 }
 // ================= INICIALIZAÇÃO =================
@@ -4053,6 +4148,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSidebarResize();
   initExpandablePanels();
   initCompactToolsToggle();
+  initMobileLayout();
   initTileset();
   initTools();
   initButtons();
