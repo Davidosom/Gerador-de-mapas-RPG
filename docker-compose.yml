@@ -1,0 +1,12 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8080:80"
+    volumes:
+      # Persiste os mapas salvos fora do container
+      - map-data:/var/www/html/data
+    restart: unless-stopped
+
+volumes:
+  map-data:

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RPG Map Editor</title>
+  <link rel="stylesheet" href="CSS/style.css">
+</head>
+<body>
+  <header>
+    <h1>🗺️ Editor de Mapa RPG</h1>
+    <div class="toolbar">
+      <button id="exportJsonBtn">💾 JSON</button>
+      <input type="file" id="importJsonInput" accept=".json" style="display:none;">
+      <button id="importJsonBtn">📂 JSON</button>
+      <button id="exportPngBtn">🖼️ PNG</button>
+      <button id="importPngBtn">📷 PNG</button>
+      <span class="toolbar-divider"></span>
+      <button id="zoomInBtn">➕ Zoom</button>
+      <button id="zoomOutBtn">➖ Zoom</button>
+      <button id="zoomResetBtn">100%</button>
+      <button id="undoBtn">↩️ Desfazer</button>
+    </div>
+  </header>
+  
+  <main class="container">
+    <aside class="sidebar" id="leftSidebar">
+      <section class="panel" id="combatPanel" data-panel="combat">
+        <h3 class="panel-header">⚔️ Combate <span class="panel-arrow">▼</span></h3>
+        <div class="panel-body">
+          <div class="combat-status">
+            <span id="combatRoundLabel">Fora de combate</span>
+          </div>
+          <div id="combatList" class="combat-list">
+            <small class="hint-text">Adicione Molduras à iniciativa pelo editor de ficha (duplo clique numa Moldura).</small>
+          </div>
+          <div class="combat-controls">
+            <button id="combatStartBtn">▶️ Iniciar</button>
+            <button id="combatNextBtn">⏭️ Próximo Turno</button>
+            <button id="combatEndBtn">⏹️ Encerrar</button>
+          </div>
+          <small class="hint-text">
+            💡 Atalhos: <strong>N</strong> próximo turno, <strong>C</strong> mostra/oculta este painel
+          </small>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="mapsize">
+        <h3 class="panel-header">📏 Tamanho do Mapa <span class="panel-arrow">▼</span></h3>
+        <div class="panel-body">
+          <div class="map-size-controls">
+            <label> Largura: <input type="number" id="mapWidthInput" min="8" max="64" value="24"></label>
+            <label> Altura: <input type="number" id="mapHeightInput" min="8" max="48" value="18"></label>
+            <button id="resizeMapBtn">🔁 Redimensionar</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="generatorPanel" data-panel="dungeon">
+        <h3 class="panel-header">🎲 Gerador de Dungeon <span class="panel-arrow">▼</span></h3>
+        <div class="panel-body">
+          <div class="generator-controls">
+            <label> Nº de salas: <input type="number" id="genRoomCountInput" min="1" max="40" value="8"></label>
+            <label> Tam. mín.: <input type="number" id="genMinSizeInput" min="2" max="20" value="3"></label>
+            <label> Tam. máx.: <input type="number" id="genMaxSizeInput" min="2" max="20" value="7"></label>
+            <label> Seed (opcional): <input type="text" id="genSeedInput" placeholder="ex: dragao-42"></label>
+            <label> Piso da sala: <select id="genRoomFloorSelect"></select></label>
+            <label> Piso do corredor: <select id="genCorridorFloorSelect"></select></label>
+            <button id="generateDungeonBtn">🎲 Gerar Dungeon</button>
+          </div>
+          <small class="hint-text">
+            💡 Substitui Chão/Paredes (Objetos não são alterados). Entra no histórico (<code>Ctrl+Z</code> desfaz tudo). Mesma seed = mesmo layout.
+          </small>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="tileset">
+        <h3 class="panel-header">🎨 Tileset <span class="panel-arrow">▼</span></h3>
+        <div class="panel-body">
+          <div id="tilesetContainer" class="tileset-wrapper"></div>
+          <small class="hint-text">
+            💡 Clique num tile para selecioná-lo, depois use o Pincel (B)
+          </small>
+        </div>
+      </section>
+    </aside>
+    
+    <div class="canvas-wrapper">
+      <canvas id="mapCanvas"></canvas>
+      <div class="import-overlay hidden"></div>
+    </div>
+
+    <aside class="sidebar sidebar-right" id="rightSidebar">
+      <div class="sidebar-right-header">
+        <button type="button" id="toggleCompactToolsBtn" title="Alternar modo compacto (só ícones)"><span id="compactToggleIcon">›</span></button>
+      </div>
+
+      <section class="panel" data-panel="tools">
+        <h3 class="panel-header" title="Ferramentas"><span class="panel-icon">🛠️</span><span class="tool-label">Ferramentas</span> <span class="panel-arrow">▼</span></h3>
+        <div class="panel-body">
+          <div class="tools">
+            <button class="tool active" data-tool="brush" title="Pincel (B)"><span class="tool-icon">🖌️</span><span class="tool-label">Pincel</span><span class="tool-key">B</span></button>
+            <button class="tool" data-tool="bucket" title="Balde (F)"><span class="tool-icon">🪣</span><span class="tool-label">Balde</span><span class="tool-key">F</span></button>
+            <button class="tool" data-tool="eraser" title="Borracha (E)"><span class="tool-icon">🧹</span><span class="tool-label">Borracha</span><span class="tool-key">E</span></button>
+            <button class="tool" data-tool="move" title="Mover (M)"><span class="tool-icon">✋</span><span class="tool-label">Mover</span><span class="tool-key">M</span></button>
+            <button class="tool" data-tool="line" title="Linha (L)"><span class="tool-icon">📐</span><span class="tool-label">Linha</span><span class="tool-key">L</span></button>
+            <button class="tool" data-tool="rect" title="Retângulo (G)"><span class="tool-icon">▭</span><span class="tool-label">Retângulo</span><span class="tool-key">G</span></button>
+            <button class="tool" data-tool="ruler" title="Régua (R)"><span class="tool-icon">📏</span><span class="tool-label">Régua</span><span class="tool-key">R</span></button>
+            <button class="tool" data-tool="aoe" title="Área de Efeito (A) — clique e arraste no mapa pra prever o raio de uma magia/item (em metros). Fica visível até você desenhar outra, apertar Esc ou clicar com o botão direito. Funciona também no Modo Visualização."><span class="tool-icon">🎯</span><span class="tool-label">Área de Efeito</span><span class="tool-key">A</span></button>
+          </div>
+          <div class="ruler-settings">
+            <label title="Metros por bloco (escala usada pela Régua e pela Área de Efeito)">
+              <span class="ruler-settings-label">Metros por bloco:</span>
+              <input type="number" id="metersPerTileInput" min="0.1" step="0.1" value="1.5">
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="layers">
+        <h3 class="panel-header" title="Camadas
+
+💡 Clique no 👁️ para mostrar/ocultar
+
+🌑 No Modo Visualização o mapa fica coberto de sombra: só se vê o que estiver no raio de Visão de uma ficha de Personagem, dentro do alcance de itens luminosos (Tocha, Fogueira, Lava) ou perto de uma Porta. Clique numa Porta para abrir/fechar — abrir libera a linha de visão para o outro lado."><span class="panel-icon">📚</span><span class="tool-label">Camadas</span> <span class="panel-arrow">▼</span></h3>
+        <div class="panel-body">
+          <div class="layers">
+            <button class="layer active" data-layer="ground" title="Chão (1)">
+              <span class="eye">👁️</span><span class="tool-label">Chão</span><span class="tool-key">1</span>
+            </button>
+            <button class="layer" data-layer="walls" title="Paredes (2)">
+              <span class="eye">👁️</span><span class="tool-label">Paredes</span><span class="tool-key">2</span>
+            </button>
+            <button class="layer" data-layer="objects" title="Objetos (3)">
+              <span class="eye">👁️</span><span class="tool-label">Objetos</span><span class="tool-key">3</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <script src="JS/app.js"></script>
+  <script src="JS/room.js"></script>
+</body>
+</html>
