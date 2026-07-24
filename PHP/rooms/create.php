@@ -39,7 +39,8 @@ $room = [
     : ['ground' => true, 'walls' => true, 'objects' => true],
   'objects' => $objects,
   'openDoors' => [],
-  'players' => []
+  'players' => [],
+  'messages' => []
 ];
 
 createRoomFile($code, $room);

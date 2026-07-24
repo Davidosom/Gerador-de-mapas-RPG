@@ -11,6 +11,9 @@
   --sidebar-right-width: 220px;
   --sidebar-right-min: 160px;
   --sidebar-right-max: 400px;
+  --chat-sidebar-width: 280px;
+  --chat-sidebar-min: 220px;
+  --chat-sidebar-max: 420px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
@@ -138,6 +141,75 @@ header h1 { font-size: 1.4rem; color: var(--accent); }
   border-left: 2px solid var(--border);
   overflow-x: hidden;
 }
+
+/* CHAT (sidebar à esquerda de tudo, antes de #leftSidebar) */
+.chat-sidebar {
+  width: var(--chat-sidebar-width);
+  min-width: var(--chat-sidebar-min);
+  max-width: var(--chat-sidebar-max);
+}
+
+.chat-sidebar .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.chat-sidebar .panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.chat-log {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.chat-message {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  word-wrap: break-word;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.chat-message .chat-author {
+  color: var(--active);
+  font-weight: bold;
+  margin-right: 4px;
+}
+
+.chat-message.chat-roll {
+  background: rgba(139, 90, 43, 0.18);
+  border-left: 3px solid var(--accent);
+}
+
+.chat-form {
+  display: flex;
+  gap: 6px;
+}
+
+.chat-form input {
+  flex: 1;
+  padding: 8px 10px;
+  background: #2a2a2a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.chat-form button {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.chat-form button:hover { background: var(--active); }
 
 .sidebar-right-header {
   display: flex;
@@ -409,7 +481,7 @@ header h1 { font-size: 1.4rem; color: var(--accent); }
 }
 .tile-category-content .tileset {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   padding: 10px 12px;
 }
@@ -654,6 +726,17 @@ canvas {
   background-color: #a8d8e8;
   background-image: linear-gradient(135deg, rgba(255,255,255,0.55) 0%, transparent 45%, rgba(255,255,255,0.15) 65%, transparent 100%);
 }
+.texture-stairs {
+  background-color: #7a6a5a;
+  background-image: repeating-linear-gradient(180deg, rgba(255,255,255,0.14) 0, rgba(255,255,255,0.14) 4px, rgba(0,0,0,0.22) 4px, rgba(0,0,0,0.22) 8px);
+}
+.texture-rug {
+  background-color: #8a2f2f;
+  background-image: linear-gradient(rgba(255,220,150,0.35), rgba(255,220,150,0.35)) top/100% 3px no-repeat,
+                    linear-gradient(rgba(255,220,150,0.35), rgba(255,220,150,0.35)) bottom/100% 3px no-repeat,
+                    linear-gradient(90deg, rgba(255,220,150,0.35), rgba(255,220,150,0.35)) left/3px 100% no-repeat,
+                    linear-gradient(90deg, rgba(255,220,150,0.35), rgba(255,220,150,0.35)) right/3px 100% no-repeat;
+}
 
 /* RESPONSIVO */
 @media (max-width: 900px) {
@@ -665,7 +748,7 @@ canvas {
     border-right: none; 
     border-bottom: 2px solid var(--border);
   }
-  .tileset { grid-template-columns: repeat(4, 1fr); }
+  .tile-category-content .tileset { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 /* Melhorias no Tileset Expansível */
 .tile-category-header {
@@ -719,6 +802,13 @@ canvas {
 body.view-mode .sidebar {
   opacity: 0.7;
   pointer-events: none;
+}
+
+/* Chat/dados continuam usáveis em Modo Visualização — é justamente durante o jogo
+   que mais se quer rolar dados e conversar. */
+body.view-mode .chat-sidebar {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 body.view-mode .canvas-wrapper {

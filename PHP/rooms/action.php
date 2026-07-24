@@ -72,6 +72,25 @@ $result = withRoomLock($code, function ($room) use ($headers, $type, $payload, &
       break;
     }
 
+    case 'moveObjects': {
+      // Movimento em lote (arraste de múltiplos objetos selecionados de uma vez).
+      // Best-effort por item: ids inválidos/sem permissão são ignorados em vez de
+      // abortar o lote inteiro.
+      $moves = is_array($payload['moves'] ?? null) ? $payload['moves'] : [];
+      foreach ($moves as $mv) {
+        if (!is_array($mv)) continue;
+        $id = $mv['id'] ?? null;
+        $idx = $id ? $findObjectIndex($id) : -1;
+        if ($idx === -1) continue;
+        $owned = $player && in_array($id, $player['ownedObjectIds'] ?? [], true);
+        if (!$isMestre && !$owned) continue;
+        if (!isset($mv['x']) || !isset($mv['y'])) continue;
+        $room['objects'][$idx]['x'] = (float) $mv['x'];
+        $room['objects'][$idx]['y'] = (float) $mv['y'];
+      }
+      break;
+    }
+
     case 'updateObject': {
       $id = $payload['id'] ?? null;
       $fields = is_array($payload['fields'] ?? null) ? $payload['fields'] : [];
@@ -135,6 +154,40 @@ $result = withRoomLock($code, function ($room) use ($headers, $type, $payload, &
         elseif (($o['ownerId'] ?? null) === $playerId) $o['ownerId'] = null;
       }
       unset($o);
+      break;
+    }
+
+    case 'chatMessage': {
+      // Sem checagem de papel: Mestre e Jogador podem ambos conversar/rolar dados.
+      $msg = $payload['message'] ?? null;
+      if (!is_array($msg) || empty($msg['text']) || !is_string($msg['text'])) {
+        $errorOut = 'invalid_payload'; $statusOut = 400; return null;
+      }
+      $text = mb_substr(trim($msg['text']), 0, 500);
+      if ($text === '') { $errorOut = 'invalid_payload'; $statusOut = 400; return null; }
+
+      // Autor sempre resolvido a partir da autenticação (nunca do texto mandado pelo
+      // cliente) — evita um Jogador se passar por "Mestre" ou por outro Jogador.
+      $author = $isMestre ? '🎲 Mestre' : mb_substr((string) ($player['displayName'] ?? 'Jogador'), 0, 60);
+
+      $entry = [
+        // Prefere o id gerado no cliente (permite ao remetente identificar seu
+        // próprio eco otimista e não duplicar a mensagem quando ela volta pelo poll).
+        'id' => (is_string($msg['id'] ?? null) && $msg['id'] !== '') ? $msg['id'] : generateEntityId('msg'),
+        'author' => $author,
+        'text' => $text,
+        'isRoll' => !empty($msg['isRoll']),
+        'ts' => (int) round(microtime(true) * 1000)
+      ];
+
+      if (!isset($room['messages'])) $room['messages'] = [];
+      $room['messages'][] = $entry;
+      // Sala é um arquivo JSON inteiro reescrito sob lock a cada ação — um log sem
+      // limite deixaria toda ação futura (inclusive edições de mapa) progressivamente
+      // mais lenta.
+      if (count($room['messages']) > 200) {
+        $room['messages'] = array_slice($room['messages'], -200);
+      }
       break;
     }
 

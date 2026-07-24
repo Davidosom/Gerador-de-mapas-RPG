@@ -111,9 +111,21 @@ const Room = {
     this._postAction('moveObject', { id, x, y });
   },
 
+  // Movimento em lote (arraste de múltiplos objetos selecionados de uma vez).
+  syncObjectsMove(moves) {
+    if (!this.active || !moves || moves.length === 0) return;
+    if (moves.length === 1) { this.syncObjectMove(moves[0].id, moves[0].x, moves[0].y); return; }
+    this._postAction('moveObjects', { moves });
+  },
+
   syncObjectUpdate(id, fields) {
     if (!this.active || !id) return;
     this._postAction('updateObject', { id, fields });
+  },
+
+  syncChatMessage(msg) {
+    if (!this.active) return;
+    this._postAction('chatMessage', { message: msg });
   },
 
   // Usado depois de resizeMap: compara posições antes/depois (clamp) e manda só o
@@ -351,6 +363,8 @@ const Room = {
       return { ...serverObj, _cachedImage: null };
     });
 
+    if (data.messages && typeof Chat !== 'undefined') Chat.onRemoteMessages(data.messages);
+
     render();
   },
 
@@ -523,7 +537,10 @@ const Room = {
       header.classList.toggle('collapsed');
     });
 
-    const sidebar = document.querySelector('.sidebar');
+    // Id explícito (não '.sidebar' genérico): desde que a sidebar de Chat também
+    // ganhou a classe "sidebar" e vem antes no DOM, um seletor por classe pegaria o
+    // painel de Chat por engano.
+    const sidebar = document.getElementById('leftSidebar');
     sidebar.insertBefore(section, sidebar.firstElementChild);
     return section;
   },

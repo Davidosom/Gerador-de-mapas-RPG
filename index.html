@@ -24,6 +24,22 @@
   </header>
   
   <main class="container">
+    <aside class="sidebar chat-sidebar" id="chatSidebar">
+      <section class="panel" data-panel="chat">
+        <h3 class="panel-header">💬 Chat <span class="panel-arrow">▼</span></h3>
+        <div class="panel-body">
+          <div id="chatLog" class="chat-log"></div>
+          <form id="chatForm" class="chat-form">
+            <input type="text" id="chatInput" maxlength="300" autocomplete="off" placeholder="Mensagem ou 1d20…">
+            <button type="submit">Enviar</button>
+          </form>
+          <small class="hint-text">
+            💡 Digite <code>1d20</code>, <code>2d6+3</code>, <code>1d100</code> etc. e Enter pra rolar.
+          </small>
+        </div>
+      </section>
+    </aside>
+
     <aside class="sidebar" id="leftSidebar">
       <section class="panel" id="combatPanel" data-panel="combat">
         <h3 class="panel-header">⚔️ Combate <span class="panel-arrow">▼</span></h3>
@@ -142,5 +158,6 @@
 
   <script src="JS/app.js"></script>
   <script src="JS/room.js"></script>
+  <script src="JS/chat.js"></script>
 </body>
 </html>

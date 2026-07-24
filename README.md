@@ -115,14 +115,14 @@ Ao selecionar o tile "Moldura" e clicar na camada Objetos, abre-se um editor par
 
 | Template | Ícone | Atributos |
 |---|---|---|
-| Personagem | ⚔️ | Nome, Classe, Nível, HP (com máximo), Mana (com máximo), AC, Deslocamento |
+| Personagem | ⚔️ | Nome, Classe, Nível, HP (com máximo), AC, Deslocamento |
 | Inimigo | 💀 | Nome, Tipo, Nível, HP, AC, Dano, Deslocamento |
 | NPC | 🧑 | Nome, Função, Facção, HP, Missão, Deslocamento |
 | Item | 📦 | Nome, Raridade, Dano, Defesa, Peso |
 | Baú/Tesouro | 🪙 | Nome, Conteúdo, Trancado (DC), Armadilha |
 | Veículo | 🚗 | Nome, Tipo, Velocidade, Combustível (com máximo) |
 
-Cada ficha ainda permite anexar uma **imagem própria** e **atributos customizados** (nome/valor livres). Em modo de edição é possível trocar o template a qualquer momento, preservando os atributos que coincidirem entre os templates. No **Modo Visualização**, clicar numa ficha no mapa mostra um tooltip com todos os seus atributos.
+Cada ficha ainda permite anexar uma **imagem própria**, **atributos customizados** (nome/valor livres), o **tamanho da moldura** (largura/altura em px, editável no editor) e **barras customizadas** — como a barra de HP, mas com nome, valor/máximo e cor livres (ex: Mana, Sanidade, Stamina). Em modo de edição é possível trocar o template a qualquer momento, preservando os atributos que coincidirem entre os templates. No **Modo Visualização**, clicar numa ficha no mapa mostra um tooltip com todos os seus atributos.
 
 ## ⚔️ Sistema de Combate
 

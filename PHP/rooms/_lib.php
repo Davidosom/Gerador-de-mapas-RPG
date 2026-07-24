@@ -191,6 +191,7 @@ function publicRoomState($room, $auth) {
     'objects' => $room['objects'],
     'openDoors' => $room['openDoors'],
     'players' => $players,
+    'messages' => $room['messages'] ?? [],
     'you' => $you
   ];
 }

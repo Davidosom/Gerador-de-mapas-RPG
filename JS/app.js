@@ -22,6 +22,12 @@ const CONFIG = {
       { id: 22, name: 'Canto', texture: 'texture-stone', emoji: null, color: '#3d2d20' },
       { id: 23, name: 'Porta', texture: 'texture-wood', emoji: '🚪', color: '#8b5a2b' },
       { id: 24, name: 'Janela', texture: null, emoji: '🪟', color: '#5a7a9a', blocksVision: false },
+      { id: 25, name: 'Escada', texture: 'texture-stairs', emoji: null, color: '#7a6a5a' },
+      { id: 26, name: 'Tapete', texture: 'texture-rug', emoji: null, color: '#8a2f2f' },
+      { id: 27, name: 'Plataforma', texture: 'texture-wood', emoji: null, color: '#9a7a4a' },
+      { id: 28, name: 'Entulho', texture: 'texture-stone', emoji: null, color: '#5a5248' },
+      { id: 29, name: 'Alçapão', texture: 'texture-wood', emoji: '🕳️', color: '#3a2a1a' },
+      { id: 30, name: 'Coluna', texture: 'texture-stone', emoji: null, color: '#7a7a72' },
     ],
     '🎒 Objetos': [
       { id: 40, name: 'Baú', texture: 'texture-wood', emoji: '🪙', color: '#d4a017' },
@@ -85,6 +91,16 @@ const state = {
   isDragging: false,
   draggedObjectIndex: null,
   dragOffset: { x: 0, y: 0 },
+
+  // Seleção múltipla de objetos (camada Objetos + ferramenta Mover): ids (não índices,
+  // que mudam a cada poll/undo/eraser) dos objetos atualmente selecionados.
+  selectedObjectIds: new Set(),
+  isMarqueeSelecting: false,
+  marqueeStart: null,
+  marqueeEnd: null,
+  // Snapshot { id, x, y } de cada objeto selecionado, tirado no início do arraste em
+  // grupo — usado pra calcular o delta aplicado aos "seguidores" do objeto arrastado.
+  dragGroupStart: null,
   camera: {
     offset: { x: 0, y: 0 },
     isPanning: false,
@@ -742,6 +758,15 @@ function initSidebarResize() {
     maxDefault: 400,
     storageKey: 'rpgEditor_rightSidebarWidth'
   });
+  makeSidebarResizable(document.getElementById('chatSidebar'), {
+    side: 'left',
+    varName: '--chat-sidebar-width',
+    minVar: '--chat-sidebar-min',
+    maxVar: '--chat-sidebar-max',
+    minDefault: 220,
+    maxDefault: 420,
+    storageKey: 'rpgEditor_chatSidebarWidth'
+  });
 }
 
 // ================= PAINÉIS EXPANSÍVEIS (ABAS DA SIDEBAR) =================
@@ -883,12 +908,14 @@ function initTools() {
 }
 
 function setTool(tool, btn) {
+  if (tool !== 'move') state.selectedObjectIds.clear();
   state.currentTool = tool;
   document.querySelectorAll('.tool').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
 }
 
 function setLayer(layer, btn) {
+  if (layer !== 'objects') state.selectedObjectIds.clear();
   state.currentLayer = layer;
   document.querySelectorAll('.layer').forEach(b => {
     b.classList.remove('active');
@@ -1173,10 +1200,36 @@ function initCanvasEvents() {
       if (objIndex !== -1) {
         const obj = state.objects[objIndex];
         if (!Room.canMoveObject(obj)) return;
+
+        // Shift-click: só alterna a seleção, sem iniciar arraste.
+        if (e.shiftKey) {
+          if (state.selectedObjectIds.has(obj.id)) state.selectedObjectIds.delete(obj.id);
+          else state.selectedObjectIds.add(obj.id);
+          render();
+          return;
+        }
+
+        // Clique normal fora de uma seleção existente: troca a seleção pra só este objeto.
+        if (!state.selectedObjectIds.has(obj.id)) {
+          state.selectedObjectIds = new Set([obj.id]);
+        }
+
         saveHistory();
         state.isDragging = true;
         state.draggedObjectIndex = objIndex;
         state.dragOffset = { x: pos.x - obj.x, y: pos.y - obj.y };
+        state.dragGroupStart = [...state.selectedObjectIds]
+          .map(id => state.objects.find(o => o.id === id))
+          .filter(Boolean)
+          .map(o => ({ id: o.id, x: o.x, y: o.y }));
+      } else {
+        // Clique em área vazia: começa uma seleção em retângulo (marquee). Sem Shift,
+        // zera a seleção atual primeiro.
+        if (!e.shiftKey) state.selectedObjectIds.clear();
+        state.isMarqueeSelecting = true;
+        state.marqueeStart = pos;
+        state.marqueeEnd = pos;
+        render();
       }
       return;
     }
@@ -1230,6 +1283,11 @@ function initCanvasEvents() {
       viewMode.doPan(e.clientX, e.clientY);
       return;
     }
+    if (state.isMarqueeSelecting) {
+      state.marqueeEnd = getMousePos(e);
+      render();
+      return;
+    }
     if (state.isDragging && (state.currentTool === 'move' || viewMode.active) && state.draggedObjectIndex !== null) {
       e.preventDefault();
       moveDraggedObject(e);
@@ -1268,11 +1326,43 @@ function initCanvasEvents() {
       viewMode.endPan();
       return;
     }
+    if (state.isMarqueeSelecting) {
+      const rx1 = Math.min(state.marqueeStart.x, state.marqueeEnd.x);
+      const ry1 = Math.min(state.marqueeStart.y, state.marqueeEnd.y);
+      const rx2 = Math.max(state.marqueeStart.x, state.marqueeEnd.x);
+      const ry2 = Math.max(state.marqueeStart.y, state.marqueeEnd.y);
+
+      // Marquee minúsculo (praticamente um clique parado em área vazia): não conta
+      // como seleção, só desmarca (comportamento já aplicado no mousedown).
+      if (rx2 - rx1 > 3 || ry2 - ry1 > 3) {
+        state.objects.forEach(obj => {
+          if (!Room.canMoveObject(obj)) return;
+          const intersects = obj.x < rx2 && obj.x + obj.w > rx1 && obj.y < ry2 && obj.y + obj.h > ry1;
+          if (intersects) state.selectedObjectIds.add(obj.id);
+        });
+      }
+
+      state.isMarqueeSelecting = false;
+      state.marqueeStart = null;
+      state.marqueeEnd = null;
+      render();
+      return;
+    }
     if (state.isDragging) {
       const draggedObj = state.draggedObjectIndex !== null ? state.objects[state.draggedObjectIndex] : null;
       state.isDragging = false;
       state.draggedObjectIndex = null;
-      if (draggedObj) Room.syncObjectMove(draggedObj.id, draggedObj.x, draggedObj.y);
+
+      if (draggedObj && state.dragGroupStart && state.dragGroupStart.length > 1) {
+        const moves = state.dragGroupStart
+          .map(({ id }) => state.objects.find(o => o.id === id))
+          .filter(Boolean)
+          .map(o => ({ id: o.id, x: o.x, y: o.y }));
+        Room.syncObjectsMove(moves);
+      } else if (draggedObj) {
+        Room.syncObjectMove(draggedObj.id, draggedObj.x, draggedObj.y);
+      }
+      state.dragGroupStart = null;
       render(); // valores (nome/HP/tooltip) voltam a aparecer assim que solta
       return;
     }
@@ -1321,6 +1411,12 @@ function initCanvasEvents() {
   window.addEventListener('mouseup', () => {
     if (state.isDrawing) state.isDrawing = false;
     if (state.isDrawingAoE) state.isDrawingAoE = false;
+    if (state.isMarqueeSelecting) {
+      state.isMarqueeSelecting = false;
+      state.marqueeStart = null;
+      state.marqueeEnd = null;
+      render();
+    }
     if (state.isMeasuring) {
       state.isMeasuring = false;
       state.rulerStart = null;
@@ -1494,6 +1590,9 @@ function moveDraggedObject(e) {
   const obj = state.objects[state.draggedObjectIndex];
   if (!obj) return;
 
+  const prevX = obj.x;
+  const prevY = obj.y;
+
   const newX = Math.max(0, Math.min(pos.x - state.dragOffset.x, canvas.width - obj.w));
   const newY = Math.max(0, Math.min(pos.y - state.dragOffset.y, canvas.height - obj.h));
 
@@ -1507,6 +1606,24 @@ function moveDraggedObject(e) {
     obj.x = newX;
     obj.y = newY;
   }
+
+  // Arraste em grupo: aplica o mesmo delta do objeto primário a todos os outros
+  // objetos selecionados. Os "seguidores" não fazem sweep de colisão de parede
+  // (só o objeto clicado) — simplificação aceita pra v1.
+  if (state.dragGroupStart && state.dragGroupStart.length > 1) {
+    const dx = obj.x - prevX;
+    const dy = obj.y - prevY;
+    if (dx !== 0 || dy !== 0) {
+      state.dragGroupStart.forEach(({ id }) => {
+        if (id === obj.id) return;
+        const follower = state.objects.find(o => o.id === id);
+        if (!follower) return;
+        follower.x = Math.max(0, Math.min(follower.x + dx, canvas.width - follower.w));
+        follower.y = Math.max(0, Math.min(follower.y + dy, canvas.height - follower.h));
+      });
+    }
+  }
+
   render();
 }
 
@@ -1588,6 +1705,7 @@ function render() {
   if (viewMode.active) renderFogOfWar(charVisible);
 
   if (state.isDrawingShape) renderShapePreview();
+  if (state.isMarqueeSelecting) renderMarqueeSelection();
   if (state.isMeasuring) renderRuler();
   if (state.rangeOverlay) renderMovementRange(state.rangeOverlay);
   if (state.aoeCenter && state.aoeEdge) renderAoEOverlay();
@@ -1996,16 +2114,77 @@ function renderObjects() {
       ctx.strokeRect(obj.x, obj.y, obj.w, obj.h);
     }
 
+    // Contorno tracejado para objetos selecionados pela ferramenta Mover (multi-seleção)
+    if (state.selectedObjectIds.has(obj.id)) {
+      ctx.strokeStyle = 'rgba(0, 200, 255, 0.8)';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(obj.x - 3, obj.y - 3, obj.w + 6, obj.h + 6);
+      ctx.setLineDash([]);
+    }
+
     drawHoverGlow(obj.x, obj.y, obj.w, obj.h, index);
   });
+}
+
+// Retângulo de seleção em arraste (ferramenta Mover, clique em área vazia)
+function renderMarqueeSelection() {
+  const { marqueeStart: s, marqueeEnd: eEnd } = state;
+  const x = Math.min(s.x, eEnd.x);
+  const y = Math.min(s.y, eEnd.y);
+  const w = Math.abs(eEnd.x - s.x);
+  const h = Math.abs(eEnd.y - s.y);
+  ctx.fillStyle = 'rgba(0, 200, 255, 0.15)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = 'rgba(0, 200, 255, 0.8)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 3]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.setLineDash([]);
 }
 
 function hpBarColor(pct) {
   return pct > 60 ? '#4a9a4a' : pct > 30 ? '#d4a017' : '#c41e3a';
 }
 
+// Lista unificada de barras de uma Moldura: a de HP (embutida no template, quando
+// existe) seguida das barras customizadas do usuário. `color: null` significa "usar
+// hpBarColor(pct)" (cor dinâmica por % de vida); uma cor customizada é sempre fixa.
+function getFrameBars(frame) {
+  const bars = [];
+  if (frame.attributes && frame.attributes['HP'] !== undefined) {
+    const hp = parseInt(frame.attributes['HP']) || 0;
+    const hpMax = parseInt(frame.attributes['HPMax']) || hp || 1;
+    bars.push({ label: 'HP', value: hp, max: hpMax, color: null });
+  }
+  (frame.customBars || []).forEach(b => {
+    const val = parseInt(b.value) || 0;
+    const max = parseInt(b.max) || val || 1;
+    bars.push({ label: b.label, value: val, max, color: b.color || null });
+  });
+  return bars;
+}
+
+function barColorFor(bar, pct) {
+  return bar.color || hpBarColor(pct);
+}
+
+// Desenha uma barra genérica (trilho + preenchimento) no canvas — usada por
+// renderFrameOnCanvas/renderMinimizedFrame/renderFrameOnExport pra não duplicar a
+// mesma lógica de fillRect 3 vezes.
+function drawBarOnCanvas(c, x, y, w, h, pct, color) {
+  c.fillStyle = 'rgba(0,0,0,0.5)';
+  c.fillRect(x, y, w, h);
+  c.fillStyle = color;
+  c.fillRect(x, y, w * (Math.max(0, Math.min(100, pct)) / 100), h);
+}
+
 // Tamanho fixo do token quando a Moldura está minimizada (só imagem + vida)
 const FRAME_MINIMIZED_SIZE = 56;
+
+// Limites do tamanho editável da Moldura expandida (ver applyFrameResize)
+const FRAME_MIN_SIZE = 60;
+const FRAME_MAX_SIZE = 400;
 
 // Alterna entre o cartão completo e o token minimizado, mantendo o centro fixo
 // (não deixa o token "pular" de posição ao minimizar/expandir)
@@ -2034,7 +2213,7 @@ function toggleFrameMinimized(frame) {
 // Contorno de seleção pulsante, anel de turno ativo e destaque ao passar o mouse —
 // compartilhado entre o cartão completo e o token minimizado
 function renderFrameSelectionOverlays(frame, index, isSelected) {
-  if (isSelected) {
+  if (isSelected || state.selectedObjectIds.has(frame.id)) {
     ctx.strokeStyle = 'rgba(0, 200, 255, 0.8)';
     ctx.lineWidth = 3;
     ctx.setLineDash([6, 4]);
@@ -2096,10 +2275,7 @@ function renderMinimizedFrame(frame, template, hasHp, index, isSelected, isBeing
     const hp = parseInt(frame.attributes['HP']) || 0;
     const hpMax = parseInt(frame.attributes['HPMax']) || hp || 1;
     const pct = Math.max(0, Math.min(100, (hp / hpMax) * 100));
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(frame.x, frame.y + portraitH, frame.w, hpH);
-    ctx.fillStyle = hpBarColor(pct);
-    ctx.fillRect(frame.x, frame.y + portraitH, frame.w * (pct / 100), hpH);
+    drawBarOnCanvas(ctx, frame.x, frame.y + portraitH, frame.w, hpH, pct, hpBarColor(pct));
   }
 
   renderFrameSelectionOverlays(frame, index, isSelected);
@@ -2134,25 +2310,26 @@ function renderFrameOnCanvas(frame, index) {
     ctx.fillText(headerText, frame.x + frame.w / 2, frame.y + 14);
   }
 
-  // Barra de HP (só para Molduras com atributo HP, e não durante o arraste)
-  if (hasHp && !isBeingDragged) {
-    const hp = parseInt(frame.attributes['HP']) || 0;
-    const hpMax = parseInt(frame.attributes['HPMax']) || hp || 1;
-    const pct = Math.max(0, Math.min(100, (hp / hpMax) * 100));
-    const barX = frame.x + 8;
-    const barY = frame.y + 29;
-    const barW = frame.w - 16;
-    const barH = 6;
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(barX, barY, barW, barH);
-    ctx.fillStyle = hpBarColor(pct);
-    ctx.fillRect(barX, barY, barW * (pct / 100), barH);
+  // Barra(s): HP embutido + barras customizadas, empilhadas (não durante o arraste)
+  const bars = getFrameBars(frame);
+  const barX = frame.x + 8;
+  const barY0 = frame.y + 29;
+  const barW = frame.w - 16;
+  const barH = 6;
+  const barGap = 2;
+  if (bars.length > 0 && !isBeingDragged) {
+    bars.forEach((bar, i) => {
+      const barY = barY0 + i * (barH + barGap);
+      const pct = Math.max(0, Math.min(100, (bar.value / bar.max) * 100));
+      drawBarOnCanvas(ctx, barX, barY, barW, barH, pct, barColorFor(bar, pct));
+    });
   }
 
   // Área do ícone/imagem
   const iconAreaSize = Math.min(frame.w - 24, 76);
   const iconX = frame.x + (frame.w - iconAreaSize) / 2;
-  const iconY = frame.y + (hasHp ? 40 : 34);
+  const barsTotalH = bars.length > 0 ? bars.length * barH + (bars.length - 1) * barGap : 0;
+  const iconY = bars.length > 0 ? barY0 + barsTotalH + 5 : frame.y + 34;
   ctx.fillStyle = 'rgba(255,255,255,0.05)';
   roundRect(ctx, iconX, iconY, iconAreaSize, iconAreaSize, 10);
 
@@ -2445,6 +2622,38 @@ function drawTexture(c, x, y, tex, col) {
     c.lineTo(x + 28, y + 16);
     c.stroke();
   }
+  // --- ESCADA ---
+  else if (tex === 'texture-stairs') {
+    c.fillStyle = col;
+    c.fillRect(x, y, ts, ts);
+    // Degraus em diagonal (claro/escuro alternado sugerindo profundidade)
+    const steps = 5;
+    for (let i = 0; i < steps; i++) {
+      const sy = y + (i * ts) / steps;
+      const sh = ts / steps;
+      c.fillStyle = i % 2 === 0 ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.18)';
+      c.fillRect(x, sy, ts, sh);
+      c.fillStyle = 'rgba(0, 0, 0, 0.35)';
+      c.fillRect(x, sy + sh - 2, ts, 2);
+    }
+  }
+  // --- TAPETE ---
+  else if (tex === 'texture-rug') {
+    c.fillStyle = col;
+    c.fillRect(x, y, ts, ts);
+    // Borda decorativa interna
+    c.strokeStyle = 'rgba(255, 220, 150, 0.55)';
+    c.lineWidth = 2;
+    c.strokeRect(x + 4, y + 4, ts - 8, ts - 8);
+    c.strokeStyle = 'rgba(255, 220, 150, 0.3)';
+    c.lineWidth = 1;
+    c.strokeRect(x + 8, y + 8, ts - 16, ts - 16);
+    // Padrão central
+    c.fillStyle = 'rgba(255, 220, 150, 0.25)';
+    c.beginPath();
+    c.arc(x + ts / 2, y + ts / 2, 4, 0, Math.PI * 2);
+    c.fill();
+  }
 }
 
 // ================= TOAST & CONFIRMAÇÃO =================
@@ -2697,10 +2906,7 @@ function renderFrameOnExport(exportCtx, frame) {
       const hp = parseInt(frame.attributes['HP']) || 0;
       const hpMax = parseInt(frame.attributes['HPMax']) || hp || 1;
       const pct = Math.max(0, Math.min(100, (hp / hpMax) * 100));
-      exportCtx.fillStyle = 'rgba(0,0,0,0.6)';
-      exportCtx.fillRect(frame.x, frame.y + portraitH, frame.w, hpH);
-      exportCtx.fillStyle = hpBarColor(pct);
-      exportCtx.fillRect(frame.x, frame.y + portraitH, frame.w * (pct / 100), hpH);
+      drawBarOnCanvas(exportCtx, frame.x, frame.y + portraitH, frame.w, hpH, pct, hpBarColor(pct));
     }
     return;
   }
@@ -2718,9 +2924,22 @@ function renderFrameOnExport(exportCtx, frame) {
   exportCtx.textBaseline = 'middle';
   exportCtx.fillText(`${template.icon} ${frame.attributes['Nome'] || template.name}`, frame.x + frame.w / 2, frame.y + 14);
 
+  const bars = getFrameBars(frame);
+  const barX = frame.x + 8;
+  const barY0 = frame.y + 29;
+  const barW = frame.w - 16;
+  const barH = 6;
+  const barGap = 2;
+  bars.forEach((bar, i) => {
+    const barY = barY0 + i * (barH + barGap);
+    const pct = Math.max(0, Math.min(100, (bar.value / bar.max) * 100));
+    drawBarOnCanvas(exportCtx, barX, barY, barW, barH, pct, barColorFor(bar, pct));
+  });
+
   const iconAreaSize = Math.min(frame.w - 24, 76);
   const iconX = frame.x + (frame.w - iconAreaSize) / 2;
-  const iconY = frame.y + 34;
+  const barsTotalH = bars.length > 0 ? bars.length * barH + (bars.length - 1) * barGap : 0;
+  const iconY = bars.length > 0 ? barY0 + barsTotalH + 5 : frame.y + 34;
   exportCtx.fillStyle = 'rgba(255,255,255,0.05)';
   roundRect(exportCtx, iconX, iconY, iconAreaSize, iconAreaSize, 10);
 
@@ -2840,7 +3059,6 @@ const frameSystem = {
         { key: 'Classe', label: 'Classe', type: 'text' },
         { key: 'Nivel', label: 'Nível', type: 'number', default: 1 },
         { key: 'HP', label: '❤️ HP', type: 'number', default: 100, max: true },
-        { key: 'Mana', label: '💎 Mana', type: 'number', default: 50, max: true },
         { key: 'AC', label: '🛡️ AC', type: 'number', default: 10 },
         { key: 'Deslocamento', label: '👟 Deslocamento (quadrados)', type: 'number', default: 6 },
         { key: 'Visao', label: '👁️ Visão (quadrados)', type: 'number', default: 8 }
@@ -2909,7 +3127,7 @@ const frameSystem = {
     }
   ],
 
-  createFrame(x, y, templateName = 'Personagem', initialAttributes = {}, imageSrc = null, customAttributes = []) {
+  createFrame(x, y, templateName = 'Personagem', initialAttributes = {}, imageSrc = null, customAttributes = [], customBars = [], w = 140, h = 180) {
     const template = this.templates.find(t => t.name === templateName) || this.templates[0];
     const frame = {
       id: generateFrameId(),
@@ -2917,11 +3135,12 @@ const frameSystem = {
       tileId: 1000,
       x: x,
       y: y,
-      w: 140,
-      h: 180,
+      w: w,
+      h: h,
       template: templateName,
       attributes: {},
       customAttributes: customAttributes || [],
+      customBars: customBars || [],
       imageSrc: imageSrc || null,
       _cachedImage: null
     };
@@ -2969,6 +3188,36 @@ const frameSystem = {
 
   addCustomAttribute(frame, name, value) {
     frame.customAttributes.push({ name, value });
+  },
+
+  // Barras customizadas (tipo "barra de vida", mas com nome/cor livres) — estrutura
+  // paralela a customAttributes, não reaproveitada, pra não precisar de checagem de
+  // tipo em todo lugar que já itera customAttributes assumindo o formato {name,value}.
+  addCustomBar(frame, label, value, max, color) {
+    if (!frame.customBars) frame.customBars = [];
+    const v = Number(value) || 0;
+    frame.customBars.push({
+      id: generateObjectId('bar'),
+      label: label || 'Barra',
+      value: v,
+      max: Number(max) || v || 1,
+      color: color || null
+    });
+    // No-op automático em Room.syncObjectUpdate quando frame.id ainda não existe
+    // (rascunho de criação) — só sincroniza de fato pra molduras já no mapa.
+    Room.syncObjectUpdate(frame.id, { customBars: frame.customBars });
+  },
+
+  updateCustomBar(frame, barId, fields) {
+    const bar = (frame.customBars || []).find(b => b.id === barId);
+    if (!bar) return;
+    Object.assign(bar, fields);
+    Room.syncObjectUpdate(frame.id, { customBars: frame.customBars });
+  },
+
+  removeCustomBar(frame, barId) {
+    frame.customBars = (frame.customBars || []).filter(b => b.id !== barId);
+    Room.syncObjectUpdate(frame.id, { customBars: frame.customBars });
   },
 
   updateAttribute(frame, attrName, value) {
@@ -3155,6 +3404,19 @@ function openFrameEditor(frame, options = {}) {
               ${frame.imageSrc ? `<button type="button" id="frameRemoveImage" class="btn-remove" style="margin-top:10px;">Remover imagem</button>` : ''}
             </div>
           </div>
+
+          <div class="attr-input-group">
+            <label>Tamanho da Moldura (px)</label>
+            ${(!isCreation && frame.minimized) ? `
+              <small class="hint-text">Expanda a moldura no mapa para redimensionar.</small>
+            ` : `
+              <div class="hp-input-row">
+                <input type="number" id="frameWidthInput" min="${FRAME_MIN_SIZE}" max="${FRAME_MAX_SIZE}" step="4" value="${frame.w}" style="width:90px;">
+                <span style="color:#888; margin: 0 4px;">×</span>
+                <input type="number" id="frameHeightInput" min="${FRAME_MIN_SIZE}" max="${FRAME_MAX_SIZE}" step="4" value="${frame.h}" style="width:90px;">
+              </div>
+            `}
+          </div>
           ` : ''}
 
           ${!isCreation ? `
@@ -3219,6 +3481,45 @@ function openFrameEditor(frame, options = {}) {
               <input type="text" id="newAttrName" placeholder="Nome (ex: Força)">
               <input type="text" id="newAttrValue" placeholder="Valor (ex: 18)">
               <button onclick="addCustomAttribute()" class="btn-add">+ Adicionar</button>
+            </div>
+          ` : ''}
+
+          ${!restricted && (frame.customBars || []).length > 0 ? `
+            <h4 style="margin-top:15px;">📊 Barras</h4>
+            ${frame.customBars.map(bar => {
+              const pct = Math.max(0, Math.min(100, (bar.value / (bar.max || 1)) * 100));
+              const barColor = bar.color || hpBarColor(pct);
+              return `
+              <div class="attr-input-group custom">
+                <div class="attr-input-actions">
+                  <input type="text" value="${bar.label}" style="flex:1;"
+                         onchange="updateFrameCustomBar('${bar.id}', 'label', this.value); refreshFrameEditor()">
+                  <button onclick="removeCustomBar('${bar.id}')" class="btn-remove" title="Remover">🗑️</button>
+                </div>
+                <div class="hp-input-row">
+                  <input type="number" value="${bar.value}" style="width:70px;"
+                         onchange="updateFrameCustomBar('${bar.id}', 'value', this.value); refreshFrameEditor()">
+                  <span style="color:#888; margin: 0 4px;">/</span>
+                  <input type="number" value="${bar.max}" style="width:70px;"
+                         onchange="updateFrameCustomBar('${bar.id}', 'max', this.value); refreshFrameEditor()">
+                  <input type="color" value="${bar.color || '#4a9a4a'}" style="width:36px;height:32px;padding:0;border:none;background:none;"
+                         onchange="updateFrameCustomBar('${bar.id}', 'color', this.value); refreshFrameEditor()">
+                  <div class="hp-bar-mini" style="flex:1;height:14px;background:#1a1a1a;border-radius:4px;overflow:hidden;margin-left:8px;">
+                    <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px;transition:width 0.3s;"></div>
+                  </div>
+                </div>
+              </div>`;
+            }).join('')}
+          ` : ''}
+
+          ${!restricted ? `
+            <div class="add-attr-section">
+              <h4 style="margin-bottom:8px;">+ Nova Barra</h4>
+              <input type="text" id="newBarLabel" placeholder="Nome (ex: Sanidade)">
+              <input type="number" id="newBarValue" placeholder="Valor (ex: 10)">
+              <input type="number" id="newBarMax" placeholder="Máximo (ex: 10)">
+              <input type="color" id="newBarColor" value="#4a9a4a" style="width:100%;height:36px;padding:0;border:1px solid var(--border);border-radius:6px;background:#2a2a2a;">
+              <button onclick="addCustomBar()" class="btn-add">+ Adicionar Barra</button>
             </div>
           ` : ''}
         </div>
@@ -3296,6 +3597,7 @@ function openFrameEditor(frame, options = {}) {
         template: e.target.value,
         attributes: {},
         customAttributes: [...oldFrame.customAttributes],
+        customBars: [...(oldFrame.customBars || [])],
         imageSrc: oldFrame.imageSrc,
         _cachedImage: oldFrame._cachedImage
       };
@@ -3364,6 +3666,48 @@ function openFrameEditor(frame, options = {}) {
       refreshFrameEditor();
     });
   }
+
+  const widthInput = modal.querySelector('#frameWidthInput');
+  const heightInput = modal.querySelector('#frameHeightInput');
+  if (widthInput && heightInput) {
+    widthInput.addEventListener('change', applyFrameResize);
+    heightInput.addEventListener('change', applyFrameResize);
+  }
+}
+
+// Aplica o novo tamanho (largura/altura) definido nos inputs do editor. Em modo
+// criação a moldura ainda não existe no mapa (só grava w/h no rascunho, sem
+// histórico/sync); em modo edição recentraliza a moldura (mesma convenção de
+// toggleFrameMinimized) e propaga via undo + Room.
+function applyFrameResize() {
+  const modal = document.querySelector('.frame-editor-modal');
+  if (!modal || !modal.currentFrame) return;
+  const wEl = modal.querySelector('#frameWidthInput');
+  const hEl = modal.querySelector('#frameHeightInput');
+  if (!wEl || !hEl) return;
+
+  const frame = modal.currentFrame;
+  const w = Math.max(FRAME_MIN_SIZE, Math.min(FRAME_MAX_SIZE, parseInt(wEl.value, 10) || frame.w));
+  const h = Math.max(FRAME_MIN_SIZE, Math.min(FRAME_MAX_SIZE, parseInt(hEl.value, 10) || frame.h));
+  wEl.value = w;
+  hEl.value = h;
+  if (w === frame.w && h === frame.h) return;
+
+  if (modal.dataset.creation === 'true') {
+    frame.w = w;
+    frame.h = h;
+    return;
+  }
+
+  saveHistory();
+  const cx = frame.x + frame.w / 2;
+  const cy = frame.y + frame.h / 2;
+  frame.w = w;
+  frame.h = h;
+  frame.x = cx - w / 2;
+  frame.y = cy - h / 2;
+  Room.syncObjectUpdate(frame.id, { w, h, x: frame.x, y: frame.y });
+  render();
 }
 
 function openFrameCreationModal(x, y) {
@@ -3377,6 +3721,7 @@ function openFrameCreationModal(x, y) {
     template: 'Personagem',
     attributes: {},
     customAttributes: [],
+    customBars: [],
     imageSrc: null,
     _cachedImage: null
   };
@@ -3402,7 +3747,10 @@ function createNewFrameFromModal() {
     frame.template,
     frame.attributes,
     frame.imageSrc,
-    [...frame.customAttributes]
+    [...frame.customAttributes],
+    [...(frame.customBars || [])],
+    frame.w,
+    frame.h
   );
 
   if (frame._cachedImage) {
@@ -3450,7 +3798,7 @@ function renderAttrInput(attrDef, value, maxVal) {
 
   if (attrDef.type === 'number') {
     if (maxVal !== null) {
-      // Campo com valor/max (HP, Mana)
+      // Campo com valor/max (ex: HP, ou qualquer atributo de template com max:true)
       const hpVal = parseInt(value) || 0;
       const hpMax = parseInt(maxVal) || 1;
       const pct = Math.max(0, Math.min(100, (hpVal / hpMax) * 100));
@@ -3504,20 +3852,11 @@ function renderFramePreview(frame) {
     </div>`;
   }
 
-  // Barras de HP/Mana
-  const hp = parseInt(frame.attributes['HP']) || 0;
-  const hpMax = parseInt(frame.attributes['HPMax']) || hp || 100;
-  const mana = parseInt(frame.attributes['Mana']) || 0;
-  const manaMax = parseInt(frame.attributes['ManaMax']) || mana || 50;
-  const hpPct = Math.max(0, Math.min(100, (hp / hpMax) * 100));
-  const manaPct = Math.max(0, Math.min(100, (mana / manaMax) * 100));
-
-  if (frame.attributes['HP'] !== undefined) {
-    html += barHTML('HP', hp, hpMax, hpPct, hpBarColor(hpPct));
-  }
-  if (frame.attributes['Mana'] !== undefined) {
-    html += barHTML('Mana', mana, manaMax, manaPct, '#4a7ac4');
-  }
+  // Barras: HP embutido + barras customizadas do usuário
+  getFrameBars(frame).forEach(bar => {
+    const pct = Math.max(0, Math.min(100, (bar.value / bar.max) * 100));
+    html += barHTML(bar.label, bar.value, bar.max, pct, barColorFor(bar, pct));
+  });
 
   // Demais atributos
   html += '<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center;">';
@@ -3583,6 +3922,39 @@ window.removeCustomAttribute = function(idx) {
   const modal = document.querySelector('.frame-editor-modal');
   if (modal && modal.currentFrame) {
     modal.currentFrame.customAttributes.splice(idx, 1);
+    refreshFrameEditor();
+  }
+};
+
+window.addCustomBar = function() {
+  const modal = document.querySelector('.frame-editor-modal');
+  if (!modal || !modal.currentFrame) return;
+
+  const labelInput = document.getElementById('newBarLabel');
+  const valueInput = document.getElementById('newBarValue');
+  const maxInput = document.getElementById('newBarMax');
+  const colorInput = document.getElementById('newBarColor');
+
+  if (labelInput.value.trim()) {
+    frameSystem.addCustomBar(modal.currentFrame, labelInput.value.trim(), valueInput.value, maxInput.value, colorInput.value);
+    labelInput.value = '';
+    valueInput.value = '';
+    maxInput.value = '';
+    refreshFrameEditor();
+  }
+};
+
+window.updateFrameCustomBar = function(barId, field, value) {
+  const modal = document.querySelector('.frame-editor-modal');
+  if (!modal || !modal.currentFrame) return;
+  const parsed = (field === 'value' || field === 'max') ? (Number(value) || 0) : value;
+  frameSystem.updateCustomBar(modal.currentFrame, barId, { [field]: parsed });
+};
+
+window.removeCustomBar = function(barId) {
+  const modal = document.querySelector('.frame-editor-modal');
+  if (modal && modal.currentFrame) {
+    frameSystem.removeCustomBar(modal.currentFrame, barId);
     refreshFrameEditor();
   }
 };
