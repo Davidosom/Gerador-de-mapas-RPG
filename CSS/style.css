@@ -171,7 +171,7 @@ header h1 { font-size: 1.4rem; color: var(--accent); }
 /* Modo compacto: rail estreito só de ícones, com a tecla de atalho como um
    selinho ao lado do ícone (ícone à esquerda, tecla à direita) — em vez do
    texto por extenso. */
-.sidebar-right.compact { width: 68px; min-width: 68px; max-width: 68px; }
+.sidebar-right.compact { width: 84px; min-width: 84px; max-width: 84px; padding: 10px 6px; }
 .sidebar-right.compact .sidebar-resize-handle { display: none; }
 .sidebar-right.compact .sidebar-right-header { justify-content: center; }
 
@@ -188,9 +188,9 @@ header h1 { font-size: 1.4rem; color: var(--accent); }
   flex-direction: row;
   justify-content: center;
   align-items: center;
-  gap: 6px;
-  padding: 8px 4px;
-  min-height: 36px;
+  gap: 8px;
+  padding: 8px 8px;
+  min-height: 40px;
 }
 .sidebar-right.compact .tool-label { display: none; }
 .sidebar-right.compact .tool-icon,
@@ -222,7 +222,8 @@ header h1 { font-size: 1.4rem; color: var(--accent); }
 .sidebar-right.compact .ruler-settings input {
   width: 100%;
   text-align: center;
-  padding: 6px 4px;
+  padding: 6px 16px 6px 4px;
+  font-size: 0.8rem;
 }
 
 .panel {
