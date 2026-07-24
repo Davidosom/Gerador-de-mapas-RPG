@@ -29,7 +29,11 @@ function rollDice(count, sides) {
 
 function formatRollMessage({ count, sides, modifier }, rolls) {
   const sum = rolls.reduce((a, b) => a + b, 0) + modifier;
-  const detail = rolls.length > 1 ? ` (${rolls.join(' + ')})` : '';
+  // Mostra o(s) valor(es) originais dos dados entre aspas sempre que houver
+  // soma de múltiplos dados ou modificador (+/-), já que nesses casos o
+  // resultado final difere do que caiu em cada dado.
+  const showDetail = rolls.length > 1 || modifier !== 0;
+  const detail = showDetail ? ` ("${rolls.join(' + ')}")` : '';
   const modStr = modifier ? (modifier > 0 ? ` +${modifier}` : ` ${modifier}`) : '';
   return `🎲 rolou ${count}d${sides}${modStr} → ${sum}${detail}`;
 }

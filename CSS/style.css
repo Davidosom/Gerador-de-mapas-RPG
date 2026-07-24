@@ -152,6 +152,25 @@ header h1 { font-size: 1.4rem; color: var(--accent); }
 .chat-sidebar .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .chat-sidebar .panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
+/* Chat recolhido: encolhe a sidebar inteira pra uma tira estreita (só o
+   cabeçalho fica visível), devolvendo espaço pro mapa. Espelha o padrão de
+   "modo compacto" já usado na sidebar direita. */
+.chat-sidebar.collapsed {
+  width: 30px;
+  min-width: 30px;
+  padding: 12px 2px;
+}
+.chat-sidebar.collapsed .sidebar-resize-handle { display: none; }
+.chat-sidebar.collapsed .panel { padding: 4px 2px; }
+.chat-sidebar.collapsed .panel-header {
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 6px;
+}
+.chat-sidebar.collapsed .panel-icon { font-size: 1.05rem; }
+.chat-sidebar.collapsed .panel-label { display: none; }
+.chat-sidebar.collapsed .panel-arrow { font-size: 0.6rem; }
+
 .chat-log {
   flex: 1;
   min-height: 120px;

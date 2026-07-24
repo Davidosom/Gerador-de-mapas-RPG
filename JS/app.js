@@ -723,7 +723,7 @@ function makeSidebarResizable(sidebar, { side, varName, minVar, maxVar, minDefau
   };
 
   handle.addEventListener('mousedown', (e) => {
-    if (sidebar.classList.contains('compact')) return; // largura fixa no modo compacto
+    if (sidebar.classList.contains('compact') || sidebar.classList.contains('collapsed')) return; // largura fixa no modo compacto/recolhido
     isResizing = true;
     handle.classList.add('dragging');
     startX = e.clientX;
@@ -780,11 +780,18 @@ function initExpandablePanels() {
     const panelId = panel.dataset.panel;
     const header = panel.querySelector(':scope > .panel-header');
     if (!header) return;
+    // Sidebar do chat só tem esse painel dentro — quando ele recolhe, a
+    // própria sidebar encolhe pra uma tira estreita (ver CSS .chat-sidebar.collapsed).
+    const ownerSidebar = panel.closest('.chat-sidebar');
 
-    if (collapsedPanels.includes(panelId)) panel.classList.add('collapsed');
+    if (collapsedPanels.includes(panelId)) {
+      panel.classList.add('collapsed');
+      if (ownerSidebar) ownerSidebar.classList.add('collapsed');
+    }
 
     header.addEventListener('click', () => {
       panel.classList.toggle('collapsed');
+      if (ownerSidebar) ownerSidebar.classList.toggle('collapsed', panel.classList.contains('collapsed'));
       const stored = new Set(JSON.parse(localStorage.getItem('rpgEditor_collapsedPanels') || '[]'));
       if (panel.classList.contains('collapsed')) stored.add(panelId);
       else stored.delete(panelId);
