@@ -88,7 +88,8 @@ const state = {
   camera: {
     offset: { x: 0, y: 0 },
     isPanning: false,
-    start: { x: 0, y: 0 }
+    start: { x: 0, y: 0 },
+    zoom: 1
   },
   
   history: [],
@@ -234,6 +235,7 @@ const canvas = document.getElementById('mapCanvas');
 const ctx = canvas.getContext('2d', { alpha: false });
 canvas.width = CONFIG.mapWidth * CONFIG.tileSize;
 canvas.height = CONFIG.mapHeight * CONFIG.tileSize;
+applyCanvasZoom();
 
 // ================= UTILITÁRIOS =================
 function getTileConfig(id) {
@@ -1030,15 +1032,22 @@ function initShortcuts() {
 }
 
 function zoom(factor) {
-  const current = parseFloat((canvas.style.transform || 'scale(1)').match(/scale\(([\d.]+)\)/)?.[1] || 1);
-  const newScale = Math.min(Math.max(current * factor, 0.3), 5);
-  canvas.style.transform = `scale(${newScale})`;
-  canvas.style.transformOrigin = 'top left';
+  state.camera.zoom = Math.min(Math.max(state.camera.zoom * factor, 0.3), 5);
+  applyCanvasZoom();
 }
 
 function resetZoom() {
-  canvas.style.transform = 'scale(1)';
-  canvas.style.transformOrigin = 'top left';
+  state.camera.zoom = 1;
+  applyCanvasZoom();
+}
+
+// Redimensiona a caixa CSS do canvas (em vez de usar transform: scale, que só
+// afeta a pintura e não o layout — o wrapper continuava reservando o espaço
+// do canvas em tamanho real, deixando o mapa "flutuando" no canto ao dar
+// zoom out em vez de encolher junto com o visualizador).
+function applyCanvasZoom() {
+  canvas.style.width = `${canvas.width * state.camera.zoom}px`;
+  canvas.style.height = `${canvas.height * state.camera.zoom}px`;
 }
 
 function resizeMapFromInputs() {
@@ -1065,6 +1074,7 @@ function resizeMap(newWidth, newHeight) {
   CONFIG.mapHeight = newHeight;
   canvas.width = CONFIG.mapWidth * CONFIG.tileSize;
   canvas.height = CONFIG.mapHeight * CONFIG.tileSize;
+  applyCanvasZoom();
 
   state.layers.ground = new Array(CONFIG.mapWidth * CONFIG.mapHeight).fill(0);
   state.layers.walls = new Array(CONFIG.mapWidth * CONFIG.mapHeight).fill(0);
@@ -1552,8 +1562,7 @@ function render() {
   ctx.translate(state.camera.offset.x, state.camera.offset.y);
 
   // Grid (só se zoom > 0.7, e nunca no Modo Visualização)
-  const scale = parseFloat((canvas.style.transform || 'scale(1)').match(/scale\(([\d.]+)\)/)?.[1] || 1);
-  if (scale > 0.7 && !viewMode.active) {
+  if (state.camera.zoom > 0.7 && !viewMode.active) {
     ctx.strokeStyle = '#2a2a2a';
     ctx.lineWidth = 1;
     for (let x = 0; x <= CONFIG.mapWidth; x++) {
