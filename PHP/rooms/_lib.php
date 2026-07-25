@@ -162,6 +162,22 @@ function resolveAuth($room, $headers) {
   return ['role' => null, 'player' => null];
 }
 
+// Checagem autoritativa de distância (Chebyshev, mesma convenção do overlay de
+// Alcance de Movimento no cliente) entre a(s) ficha(s) do Jogador e uma célula do
+// grid (ex: uma Porta) — usada pra validar de novo no servidor o que o cliente já
+// checou, já que o papel/ownership nunca é confiável vindo só do cliente.
+function playerNearGridCell($room, $player, $gridX, $gridY) {
+  $ownedIds = $player['ownedObjectIds'] ?? [];
+  $tileSize = $room['tileSize'] ?: 32;
+  foreach ($room['objects'] as $o) {
+    if (empty($o['id']) || !in_array($o['id'], $ownedIds, true)) continue;
+    $ogx = (int) floor((($o['x'] ?? 0) + ($o['w'] ?? 0) / 2) / $tileSize);
+    $ogy = (int) floor((($o['y'] ?? 0) + ($o['h'] ?? 0) / 2) / $tileSize);
+    if (max(abs($ogx - $gridX), abs($ogy - $gridY)) <= 1) return true;
+  }
+  return false;
+}
+
 // Sala exposta ao cliente nunca inclui hashes de token
 function publicRoomState($room, $auth) {
   $players = array_map(function ($p) {
@@ -191,7 +207,20 @@ function publicRoomState($room, $auth) {
     'objects' => $room['objects'],
     'openDoors' => $room['openDoors'],
     'players' => $players,
-    'messages' => $room['messages'] ?? [],
+    'messages' => visibleMessages($room['messages'] ?? [], $auth),
     'you' => $you
   ];
+}
+
+// Sussurros ('to' setado) só voltam pro remetente e pro destinatário — nem o Mestre
+// vê o conteúdo de um sussurro entre dois Jogadores. Filtrado aqui (não no cliente)
+// porque é a única forma real de "privado": o cliente nunca recebe o texto de uma
+// mensagem que não é dele.
+function visibleMessages($messages, $auth) {
+  $myId = $auth['role'] === 'mestre' ? 'GM' : ($auth['player']['id'] ?? null);
+  return array_values(array_filter($messages, function ($m) use ($myId) {
+    $to = $m['to'] ?? null;
+    if ($to === null) return true; // pública
+    return $to === $myId || ($m['fromId'] ?? null) === $myId;
+  }));
 }

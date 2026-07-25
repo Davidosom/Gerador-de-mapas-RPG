@@ -37,6 +37,9 @@
         <div class="panel-body">
           <div id="chatLog" class="chat-log"></div>
           <form id="chatForm" class="chat-form">
+            <select id="chatRecipientSelect" class="chat-recipient-select hidden" title="Enviar para…">
+              <option value="">Todos (público)</option>
+            </select>
             <input type="text" id="chatInput" maxlength="300" autocomplete="off" placeholder="Mensagem ou 1d20…">
             <button type="submit">Enviar</button>
           </form>
@@ -79,20 +82,37 @@
         </div>
       </section>
 
-      <section class="panel" id="generatorPanel" data-panel="dungeon">
-        <h3 class="panel-header">🎲 Gerador de Dungeon <span class="panel-arrow">▼</span></h3>
+      <section class="panel" id="generatorPanel" data-panel="scenario">
+        <h3 class="panel-header">🗺️ Gerador de Cenários <span class="panel-arrow">▼</span></h3>
         <div class="panel-body">
           <div class="generator-controls">
-            <label> Nº de salas: <input type="number" id="genRoomCountInput" min="1" max="40" value="8"></label>
-            <label> Tam. mín.: <input type="number" id="genMinSizeInput" min="2" max="20" value="3"></label>
-            <label> Tam. máx.: <input type="number" id="genMaxSizeInput" min="2" max="20" value="7"></label>
+            <label> Tipo de Cenário:
+              <select id="genScenarioTypeSelect">
+                <option value="masmorra">Masmorra</option>
+                <option value="vilarejo">Vilarejo Medieval</option>
+                <option value="caverna">Caverna Orgânica</option>
+              </select>
+            </label>
             <label> Seed (opcional): <input type="text" id="genSeedInput" placeholder="ex: dragao-42"></label>
-            <label> Piso da sala: <select id="genRoomFloorSelect"></select></label>
-            <label> Piso do corredor: <select id="genCorridorFloorSelect"></select></label>
-            <button id="generateDungeonBtn">🎲 Gerar Dungeon</button>
+
+            <div id="genRoomsParams" class="generator-param-group">
+              <label> Nº de salas/construções: <input type="number" id="genRoomCountInput" min="1" max="40" value="8"></label>
+              <label> Tam. mín.: <input type="number" id="genMinSizeInput" min="2" max="20" value="3"></label>
+              <label> Tam. máx.: <input type="number" id="genMaxSizeInput" min="2" max="20" value="7"></label>
+              <label> Piso da estrutura: <select id="genStructureFloorSelect"></select></label>
+              <label> Piso do caminho: <select id="genPathFloorSelect"></select></label>
+            </div>
+
+            <div id="genCaveParams" class="generator-param-group hidden">
+              <label> % de preenchimento inicial: <input type="number" id="genFillProbInput" min="10" max="90" value="45"></label>
+              <label> Nº de suavizações: <input type="number" id="genIterationsInput" min="0" max="10" value="4"></label>
+              <label> Piso da caverna: <select id="genCaveFloorSelect"></select></label>
+            </div>
+
+            <button id="generateScenarioBtn">🎲 Gerar Cenário</button>
           </div>
           <small class="hint-text">
-            💡 Substitui Chão/Paredes (Objetos não são alterados). Entra no histórico (<code>Ctrl+Z</code> desfaz tudo). Mesma seed = mesmo layout.
+            💡 Substitui Chão/Paredes e adiciona decorações (Objetos existentes não são alterados). Entra no histórico (<code>Ctrl+Z</code> desfaz tudo). Mesma seed = mesmo layout.
           </small>
         </div>
       </section>

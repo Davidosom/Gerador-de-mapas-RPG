@@ -204,10 +204,27 @@ header h1 { font-size: 1.4rem; color: var(--accent); }
   border-left: 3px solid var(--accent);
 }
 
+.chat-message.chat-private {
+  background: rgba(120, 70, 160, 0.2);
+  border-left: 3px solid #a06cd5;
+}
+
 .chat-form {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
+
+.chat-recipient-select {
+  flex: 1 1 100%;
+  padding: 6px 8px;
+  background: #2a2a2a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.8rem;
+}
+.chat-recipient-select.hidden { display: none; }
 
 .chat-form input {
   flex: 1;
@@ -839,11 +856,12 @@ body.mobile-layout .mobile-sidebar-toggles button.active {
   border-color: var(--accent);
 }
 /* Jogador já cai forçado em Modo Visualização (ver room.js) — nesse modo os
-   painéis do Mestre (leftSidebar) e Ferramentas/Camadas (rightSidebar) ficam
-   vazios ou sem interação, então esconder esses 2 atalhos evita abrir um
-   overlay morto pro público prioritário (jogador no celular). */
-body.view-mode .mobile-sidebar-toggles [data-mobile-target="leftSidebar"],
-body.view-mode .mobile-sidebar-toggles [data-mobile-target="rightSidebar"] {
+   painéis do Mestre (leftSidebar: Tileset/Cenários/Tamanho do Mapa/Combate)
+   ficam vazios ou sem interação, então esconder esse atalho evita abrir um
+   overlay morto pro público prioritário (jogador no celular). rightSidebar
+   (Ferramentas/Camadas) continua com o atalho visível — Régua, Área de Efeito
+   e troca de camada funcionam em Modo Visualização (ver exceção acima). */
+body.view-mode .mobile-sidebar-toggles [data-mobile-target="leftSidebar"] {
   display: none;
 }
 
@@ -925,6 +943,17 @@ body.view-mode .sidebar {
 /* Chat/dados continuam usáveis em Modo Visualização — é justamente durante o jogo
    que mais se quer rolar dados e conversar. */
 body.view-mode .chat-sidebar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Régua/Área de Efeito e troca/visibilidade de camada também continuam
+   clicáveis em Modo Visualização — nenhum dos dois depende do modo de edição,
+   e o Jogador fica preso ao Modo Visualização o tempo todo (ver
+   Room._onEnterRoom). #rightSidebar só contém os painéis Ferramentas/Camadas,
+   então liberar a sidebar inteira aqui é seguro (mesmo padrão do chat acima).
+   Corrige também o Mestre solo em Modo Visualização, que tinha o mesmo bug. */
+body.view-mode .sidebar-right {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1304,7 +1333,7 @@ object.selected {
 
 .hp-quick-adjust button:hover { background: #444; }
 
-/* Gerador de Dungeon */
+/* Gerador de Cenários */
 .generator-controls {
   display: flex;
   flex-direction: column;
@@ -1344,6 +1373,14 @@ object.selected {
 .generator-controls button:hover {
   background: var(--active);
 }
+
+.generator-param-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.generator-param-group.hidden { display: none; }
 
 /* ===================== SALAS MULTIPLAYER ===================== */
 
@@ -1459,8 +1496,20 @@ object.selected {
    sentido pra quem não edita o cenário (diferente do dimming genérico de .view-mode,
    que só reduz a opacidade e desabilita cliques) */
 body.room-player .panel[data-panel="tileset"],
-body.room-player .panel[data-panel="dungeon"],
+body.room-player .panel[data-panel="scenario"],
 body.room-player .panel[data-panel="mapsize"],
 body.room-player .panel[data-panel="combat"] {
+  display: none;
+}
+
+/* Ferramentas de desenho não fazem nada pro Jogador (o clique no canvas em Modo
+   Visualização é sempre reroteado pra seleção/porta/pan, nunca pinta) — esconde
+   pra deixar só Régua e Área de Efeito, que são as únicas realmente usáveis. */
+body.room-player .tool[data-tool="brush"],
+body.room-player .tool[data-tool="bucket"],
+body.room-player .tool[data-tool="eraser"],
+body.room-player .tool[data-tool="move"],
+body.room-player .tool[data-tool="line"],
+body.room-player .tool[data-tool="rect"] {
   display: none;
 }

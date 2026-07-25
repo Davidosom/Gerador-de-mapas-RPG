@@ -41,9 +41,11 @@ function formatRollMessage({ count, sides, modifier }, rolls) {
 const Chat = {
   messages: [],
   _logEl: null,
+  _recipientSelect: null,
 
   init() {
     this._logEl = document.getElementById('chatLog');
+    this._recipientSelect = document.getElementById('chatRecipientSelect');
     const form = document.getElementById('chatForm');
     if (!form || !this._logEl) return;
     form.addEventListener('submit', e => {
@@ -52,6 +54,7 @@ const Chat = {
       this.handleInput(input.value);
       input.value = '';
     });
+    this.refreshRecipients();
   },
 
   handleInput(raw) {
@@ -71,15 +74,43 @@ const Chat = {
     const author = (typeof Room !== 'undefined' && Room.active)
       ? (Room.role === 'mestre' ? '🎲 Mestre' : (Room.displayName || 'Jogador'))
       : 'Você';
-    const msg = { id: generateObjectId('msg'), author, text, isRoll: !!isRoll, ts: Date.now() };
+    const to = (typeof Room !== 'undefined' && Room.active && this._recipientSelect)
+      ? (this._recipientSelect.value || null)
+      : null;
+    const msg = { id: generateObjectId('msg'), author, to, text, isRoll: !!isRoll, ts: Date.now() };
     if (typeof Room !== 'undefined' && Room.active) Room.syncChatMessage(msg);
     this._appendLocal(msg);
   },
 
   // Chamado pelo Room a cada poll com as mensagens conhecidas do servidor — ignora
-  // qualquer id já exibido (dedupe do eco otimista local vs. a cópia do poll).
+  // qualquer id já exibido (dedupe do eco otimista local vs. a cópia do poll). O
+  // servidor já filtra sussurros que não são nossos antes de mandar (ver
+  // visibleMessages em PHP/rooms/_lib.php) — o que chega aqui já é tudo que
+  // podemos ver.
   onRemoteMessages(serverMessages) {
     (serverMessages || []).forEach(m => this._appendLocal(m));
+  },
+
+  // Repovoa o seletor de destinatário com "Todos" + Mestre (se não formos o
+  // Mestre) + cada outro Jogador da sala. Chamado ao entrar/sair da sala e
+  // sempre que o roster de Jogadores muda (Room._applyRemoteState).
+  refreshRecipients() {
+    if (!this._recipientSelect) return;
+    const active = typeof Room !== 'undefined' && Room.active;
+    this._recipientSelect.classList.toggle('hidden', !active);
+    if (!active) { this._recipientSelect.innerHTML = '<option value="">Todos (público)</option>'; return; }
+
+    const prevValue = this._recipientSelect.value;
+    const options = ['<option value="">Todos (público)</option>'];
+    if (Room.role !== 'mestre') options.push('<option value="GM">🔒 🎲 Mestre</option>');
+    (Room.players || []).forEach(p => {
+      if (Room.role === 'player' && p.id === Room.playerId) return; // não sussurra pra si mesmo
+      options.push(`<option value="${p.id}">🔒 ${escapeHtml(p.displayName)}</option>`);
+    });
+    this._recipientSelect.innerHTML = options.join('');
+    if ([...this._recipientSelect.options].some(o => o.value === prevValue)) {
+      this._recipientSelect.value = prevValue;
+    }
   },
 
   _appendLocal(msg) {
@@ -87,9 +118,11 @@ const Chat = {
     if (this.messages.some(m => m.id === msg.id)) return;
     this.messages.push(msg);
 
+    const isPrivate = !!msg.to;
     const el = document.createElement('div');
-    el.className = 'chat-message' + (msg.isRoll ? ' chat-roll' : '');
-    el.innerHTML = `<span class="chat-author">${escapeHtml(msg.author)}:</span> ${escapeHtml(msg.text)}`;
+    el.className = 'chat-message' + (msg.isRoll ? ' chat-roll' : '') + (isPrivate ? ' chat-private' : '');
+    const prefix = isPrivate ? '🔒 ' : '';
+    el.innerHTML = `<span class="chat-author">${prefix}${escapeHtml(msg.author)}:</span> ${escapeHtml(msg.text)}`;
     this._logEl.appendChild(el);
     this._logEl.scrollTop = this._logEl.scrollHeight;
   }

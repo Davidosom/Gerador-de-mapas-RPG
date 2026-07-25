@@ -143,6 +143,11 @@ const viewMode = {
   panStart: { x: 0, y: 0 },
 
   toggle() {
+    // Jogador fica preso ao Modo Visualização: sem isso a tecla V (sem guarda de
+    // papel) deixaria o Jogador sair, o que desliga fog-of-war/colisão de parede
+    // (ligados só por viewMode.active) e reabre o caminho de arraste do editor.
+    if (typeof Room !== 'undefined' && Room.active && Room.role === 'player') return;
+
     this.active = !this.active;
     const btn = document.getElementById('viewModeBtn');
 
@@ -185,6 +190,13 @@ const viewMode = {
     const gridY = Math.floor(y / CONFIG.tileSize);
     const idx = getIndexFromCoords(gridX, gridY);
     if (idx === -1 || state.layers.walls[idx] !== 23) return false;
+
+    // Jogador só abre porta a até 1 bloco da própria ficha; Mestre não tem restrição.
+    // O clique ainda é "consumido" (era mesmo uma porta) mesmo quando recusado.
+    if (typeof Room !== 'undefined' && Room.active && Room.role === 'player' && !isPlayerNearGridCell(gridX, gridY)) {
+      toast('Chegue mais perto da porta pra abrir.', 'warning');
+      return true;
+    }
 
     if (state.openDoors.has(idx)) state.openDoors.delete(idx);
     else state.openDoors.add(idx);
@@ -272,6 +284,19 @@ function getCoordsFromIndex(index) {
     x: index % CONFIG.mapWidth,
     y: Math.floor(index / CONFIG.mapWidth)
   };
+}
+
+// Distância de 1 bloco (Chebyshev, mesma convenção do overlay de Alcance de
+// Movimento) entre a(s) ficha(s) do Jogador e uma célula do grid — usado pra
+// exigir estar perto de uma Porta pra poder abri-la. Mestre não passa por aqui.
+function isPlayerNearGridCell(gridX, gridY) {
+  const ownedIds = (typeof Room !== 'undefined' && Room.ownedObjectIds) || [];
+  return state.objects.some(o => {
+    if (!ownedIds.includes(o.id)) return false;
+    const ogx = Math.floor((o.x + o.w / 2) / CONFIG.tileSize);
+    const ogy = Math.floor((o.y + o.h / 2) / CONFIG.tileSize);
+    return Math.max(Math.abs(ogx - gridX), Math.abs(ogy - gridY)) <= 1;
+  });
 }
 
 // ================= FERRAMENTAS DE FORMA (LINHA / RETÂNGULO) =================
@@ -362,6 +387,17 @@ function isBlockedAt(x, y, w, h) {
   const gy = Math.floor((y + h / 2) / CONFIG.tileSize);
   const idx = getIndexFromCoords(gx, gy);
   return idx !== -1 && isBlockingWallCell(idx);
+}
+
+// Colisão token-vs-token: caixa inteira (x,y,w,h) contra a de toda outra Moldura
+// (type === 'frame') no mapa, exceto excludeId (o próprio objeto arrastado).
+// Diferente de isBlockedAt (paredes), que só testa o ponto central — aqui usamos a
+// caixa inteira porque não há um "tile" de referência único entre dois tokens.
+function isBlockedByOtherToken(x, y, w, h, excludeId) {
+  return state.objects.some(o =>
+    o.type === 'frame' && o.id !== excludeId &&
+    x < o.x + o.w && x + w > o.x && y < o.y + o.h && y + h > o.y
+  );
 }
 
 // Reaproveita getLineCells (Bresenham) para andar da origem até o alvo: qualquer
@@ -549,7 +585,7 @@ function computeVisibleFog(charVisible) {
   return visible;
 }
 
-// ================= GERAÇÃO PROCEDURAL DE DUNGEON =================
+// ================= GERAÇÃO PROCEDURAL DE CENÁRIOS =================
 function hashSeed(value) {
   let h = 0;
   const s = String(value);
@@ -569,6 +605,20 @@ function mulberry32(seed) {
   };
 }
 
+// Fábrica de RNG: com seed, mulberry32(hashSeed(seed)) determinístico; sem seed, Math.random nativo.
+function seededRng(seed) {
+  return seed ? mulberry32(hashSeed(seed)) : Math.random;
+}
+
+// Fisher-Yates determinístico (usa sempre o rng passado, nunca Math.random).
+function shuffleInPlace(arr, rng) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 function rectsOverlap(a, b, margin = 0) {
   return !(
     a.x + a.w + margin <= b.x ||
@@ -578,21 +628,59 @@ function rectsOverlap(a, b, margin = 0) {
   );
 }
 
-function generateDungeon(options) {
-  if (!Room.canEditLayers()) return;
-  const { roomCount, seed, floorRoomTileId, floorCorridorTileId } = options;
+const SCENARIO_TYPES = {
+  masmorra: {
+    label: 'Masmorra', strategy: 'rooms',
+    baseFillTileId: 0,                                   // Vazio — sem mudança vs. o gerador antigo
+    defaultStructureFloorId: 3, defaultPathFloorId: 2,    // Pedra / Terra
+    structureNoun: 'sala', structureNounPlural: 'salas',
+    decorations: {
+      chance: 0.35,                                       // 35% das salas ganham 1 prop
+      table: [{ tileId: 44, weight: 2 }, { tileId: 40, weight: 1 }] // Tocha, Baú
+    }
+  },
+  vilarejo: {
+    label: 'Vilarejo Medieval', strategy: 'rooms',
+    baseFillTileId: 1,                                   // Grama — preenche o mapa inteiro antes das construções
+    defaultStructureFloorId: 5, defaultPathFloorId: 2,    // Madeira / Terra
+    structureNoun: 'construção', structureNounPlural: 'construções',
+    decorations: {
+      chance: 0.55,
+      table: [
+        { tileId: 41, weight: 3 }, { tileId: 42, weight: 2 }, // Mesa, Cadeira
+        { tileId: 45, weight: 2 }, { tileId: 44, weight: 1 }  // Barril, Tocha
+      ],
+      scatter: { tileId: 67, density: 0.025, minSpacing: 3, maxCount: 16 } // Planta, fora das construções
+    }
+  },
+  caverna: {
+    label: 'Caverna Orgânica', strategy: 'cave',
+    defaultCaveFloorId: 2,                               // Terra
+    defaultFillProbability: 45, defaultIterations: 4,     // % (unidade da UI)
+    decorations: {
+      density: 0.04, minSpacing: 4, maxCount: 20,
+      table: [
+        { tileId: 28, weight: 4 }, { tileId: 44, weight: 3 }, // Entulho, Tocha
+        { tileId: 66, weight: 2 },                            // Crânio
+        { tileId: 64, weight: 1 }, { tileId: 65, weight: 1 }, // Gema, Moeda
+        { tileId: 40, weight: 1 }                             // Baú
+      ]
+    }
+  }
+};
+
+// Gera o layout de Chão/Paredes de salas/construções conectadas por corredores/caminhos
+// em L, com portas na fronteira — usado por Masmorra e Vilarejo (a única diferença entre
+// os dois é o preenchimento de base e os tiles padrão, aplicados pelo caller antes de chamar
+// esta função). Função pura de terreno: não mexe em histórico/render/sync, isso é
+// responsabilidade única de generateScenario().
+function generateRoomsLayout(options, rng) {
+  const { roomCount, floorStructureTileId, floorPathTileId, structureNounPlural } = options;
   const minSize = Math.min(options.minSize, options.maxSize);
   const maxSize = Math.max(options.minSize, options.maxSize);
-
-  const rng = seed ? mulberry32(hashSeed(seed)) : Math.random;
   const randInt = (min, max) => Math.floor(rng() * (max - min + 1)) + min;
 
-  saveHistory();
-  state.layers.ground = new Array(CONFIG.mapWidth * CONFIG.mapHeight).fill(0);
-  state.layers.walls = new Array(CONFIG.mapWidth * CONFIG.mapHeight).fill(0);
-  state.openDoors.clear();
-
-  // Posiciona salas por rejection sampling, com 1 tile de margem da borda do
+  // Posiciona estruturas por rejection sampling, com 1 tile de margem da borda do
   // mapa (para o wall-pass sempre ter uma célula vazia disponível ao redor)
   const rooms = [];
   const maxAttempts = roomCount * 20;
@@ -607,18 +695,24 @@ function generateDungeon(options) {
   }
 
   if (rooms.length < roomCount) {
-    toast(`Foi possível posicionar ${rooms.length} de ${roomCount} salas.`, 'warning');
+    toast(`Foi possível posicionar ${rooms.length} de ${roomCount} ${structureNounPlural}.`, 'warning');
   }
 
+  // Footprint explícito (índices dentro de alguma estrutura/caminho) em vez de inferir
+  // "dentro/fora" pelo valor do tile — necessário porque o Vilarejo pré-preenche o mapa
+  // inteiro com Grama (não-zero), então "ground !== 0" deixaria de distinguir estrutura
+  // de grama aberta. Para a Masmorra (baseFillTileId 0) o footprint é idêntico a
+  // "ground !== 0", já que nada mais escreve em ground fora dele — mesmo resultado de antes.
+  const footprint = new Set();
   const setFloor = (x, y, tileId) => {
     const idx = getIndexFromCoords(x, y);
-    if (idx !== -1) state.layers.ground[idx] = tileId;
+    if (idx !== -1) { state.layers.ground[idx] = tileId; footprint.add(idx); }
   };
 
   rooms.forEach(room => {
     for (let y = room.y; y < room.y + room.h; y++) {
       for (let x = room.x; x < room.x + room.w; x++) {
-        setFloor(x, y, floorRoomTileId);
+        setFloor(x, y, floorStructureTileId);
       }
     }
   });
@@ -628,7 +722,7 @@ function generateDungeon(options) {
     y: Math.floor(room.y + room.h / 2)
   });
 
-  // Conecta cada sala à mais próxima já posicionada (greedy, não é MST ótima,
+  // Conecta cada estrutura à mais próxima já posicionada (greedy, não é MST ótima,
   // mas dá conectividade orgânica sem precisar de Delaunay/grafo completo)
   rooms.forEach((room, i) => {
     if (i === 0) return;
@@ -648,10 +742,10 @@ function generateDungeon(options) {
     while (cy !== to.y) { path.push({ x: cx, y: cy }); cy += cy < to.y ? 1 : -1; }
     path.push({ x: cx, y: cy });
 
-    path.forEach(({ x, y }) => setFloor(x, y, floorCorridorTileId));
+    path.forEach(({ x, y }) => setFloor(x, y, floorPathTileId));
 
-    // Marca Porta nos pontos onde o corredor cruza a borda de cada sala
-    // (o caminho começa/termina no CENTRO das salas, não na entrada)
+    // Marca Porta nos pontos onde o caminho cruza a borda de cada estrutura
+    // (o caminho começa/termina no CENTRO das estruturas, não na entrada)
     const insideRect = (cell, rect) =>
       cell.x >= rect.x && cell.x < rect.x + rect.w && cell.y >= rect.y && cell.y < rect.y + rect.h;
 
@@ -667,23 +761,241 @@ function generateDungeon(options) {
     });
   });
 
-  // Wall-pass: qualquer vizinho ortogonal vazio de uma célula de piso vira Parede
+  // Wall-pass generalizado: qualquer vizinho ortogonal do footprint que esteja FORA
+  // dele vira Parede (em vez de checar ground===0, que só funciona sem base fill).
   const neighbors = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  for (let y = 0; y < CONFIG.mapHeight; y++) {
-    for (let x = 0; x < CONFIG.mapWidth; x++) {
-      if (state.layers.ground[getIndexFromCoords(x, y)] === 0) continue;
-      neighbors.forEach(([dx, dy]) => {
-        const nIdx = getIndexFromCoords(x + dx, y + dy);
-        if (nIdx !== -1 && state.layers.ground[nIdx] === 0) {
-          state.layers.walls[nIdx] = 20;
-        }
-      });
+  footprint.forEach(idx => {
+    const { x, y } = getCoordsFromIndex(idx);
+    neighbors.forEach(([dx, dy]) => {
+      const nIdx = getIndexFromCoords(x + dx, y + dy);
+      if (nIdx !== -1 && !footprint.has(nIdx)) {
+        state.layers.walls[nIdx] = 20;
+      }
+    });
+  });
+
+  return { rooms };
+}
+
+// Gera uma caverna orgânica por autômato celular: ruído inicial -> suavização (regra
+// clássica 5/3 em vizinhança de Moore) -> mantém só a maior região conectada de piso
+// (BFS 4-direções, determinístico, não consome rng) -> wall-pass. Sem portas (não faz
+// sentido numa caverna natural). Também pura: sem histórico/render/sync.
+function generateCaveLayout(options, rng) {
+  const { floorCaveTileId } = options;
+  const fillProbability = options.fillProbability ?? 0.45;
+  const iterations = options.iterations ?? 4;
+  const W = CONFIG.mapWidth, H = CONFIG.mapHeight;
+  const BORDER_MARGIN = 1; // mesma convenção de margem usada no posicionamento de estruturas
+
+  // 1) Inicialização: 1 = rocha, 0 = piso. Borda sempre forçada pra rocha.
+  let grid = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const idx = y * W + x;
+      const onBorder = x < BORDER_MARGIN || y < BORDER_MARGIN || x >= W - BORDER_MARGIN || y >= H - BORDER_MARGIN;
+      grid[idx] = onBorder ? 1 : (rng() < fillProbability ? 1 : 0);
+    }
+  }
+
+  // 2) Suavização — vizinhança de Moore (8 vizinhos); fora do mapa conta como rocha.
+  const countWallNeighbors = (g, x, y) => {
+    let count = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) { count++; continue; }
+        count += g[ny * W + nx];
+      }
+    }
+    return count;
+  };
+
+  for (let iter = 0; iter < iterations; iter++) {
+    const next = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const idx = y * W + x;
+        const n = countWallNeighbors(grid, x, y);
+        next[idx] = n >= 5 ? 1 : (n <= 3 ? 0 : grid[idx]);
+      }
+    }
+    grid = next;
+  }
+
+  // 3) Conectividade: BFS 4-direcional determinístico (varredura row-major, sem
+  // aleatoriedade). Mantém só a maior componente de piso — garante que a caverna
+  // inteira seja alcançável, sem precisar cavar túneis extras entre bolsões isolados.
+  const visited = new Uint8Array(W * H);
+  let largest = [];
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const startIdx = y * W + x;
+      if (grid[startIdx] !== 0 || visited[startIdx]) continue;
+      const queue = [startIdx];
+      visited[startIdx] = 1;
+      const component = [];
+      let head = 0;
+      while (head < queue.length) {
+        const cur = queue[head++];
+        component.push(cur);
+        const cx = cur % W, cy = Math.floor(cur / W);
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dy]) => {
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) return;
+          const nIdx = ny * W + nx;
+          if (grid[nIdx] === 0 && !visited[nIdx]) { visited[nIdx] = 1; queue.push(nIdx); }
+        });
+      }
+      if (component.length > largest.length) largest = component;
+    }
+  }
+
+  largest.forEach(idx => { state.layers.ground[idx] = floorCaveTileId; });
+  const floorCells = largest.map(idx => getCoordsFromIndex(idx));
+
+  // 4) Wall-pass — mesma técnica de sempre (aqui ground===0 funciona direto, sem base fill).
+  const neighbors4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  floorCells.forEach(({ x, y }) => {
+    neighbors4.forEach(([dx, dy]) => {
+      const nIdx = getIndexFromCoords(x + dx, y + dy);
+      if (nIdx !== -1 && state.layers.ground[nIdx] === 0) {
+        state.layers.walls[nIdx] = 20;
+      }
+    });
+  });
+
+  return { floorCells };
+}
+
+// ---- Decorações automáticas (compartilhado pelos 3 tipos de cenário) ----
+
+function weightedPick(rng, table) {
+  const total = table.reduce((s, t) => s + t.weight, 0);
+  let r = rng() * total;
+  for (const entry of table) {
+    if (r < entry.weight) return entry.tileId;
+    r -= entry.weight;
+  }
+  return table[table.length - 1].tileId;
+}
+
+// Cria o objeto decorativo com a mesma forma que o Pincel usa ao clicar na camada
+// Objetos (ver paint()) — sem frameSystem/fichas: decoração é só um tile solto, não
+// algo com atributos editáveis (evita gerar fichas com nomes/atributos de placeholder).
+function placeDecorationTile(gridX, gridY, tileId) {
+  const newObj = {
+    id: generateObjectId('obj'),
+    tileId,
+    x: gridX * CONFIG.tileSize,
+    y: gridY * CONFIG.tileSize,
+    w: CONFIG.tileSize,
+    h: CONFIG.tileSize
+  };
+  state.objects.push(newObj);
+  Room.syncObjectAdd(newObj);
+  return newObj;
+}
+
+// Regra "um item por estrutura": pra cada sala/construção, com probabilidade `chance`,
+// escolhe 1 item da tabela e o posiciona numa célula uniformemente aleatória dela.
+function placeStructureDecorations(rooms, decorationConfig, rng) {
+  let count = 0;
+  rooms.forEach(room => {
+    if (rng() >= decorationConfig.chance) return;
+    const gx = room.x + Math.floor(rng() * room.w);
+    const gy = room.y + Math.floor(rng() * room.h);
+    placeDecorationTile(gx, gy, weightedPick(rng, decorationConfig.table));
+    count++;
+  });
+  return count;
+}
+
+// Regra "scatter esparso com espaçamento mínimo": embaralha as células candidatas,
+// aceita gulosamente até `maxCount` (ou `density` * total, o que for menor), rejeitando
+// qualquer candidata a menos de `minSpacing` (Chebyshev) de uma já aceita.
+function scatterDecorations(cells, table, rng, { density, minSpacing, maxCount }) {
+  const shuffled = shuffleInPlace([...cells], rng);
+  const targetCount = Math.min(maxCount, Math.round(cells.length * density));
+  const placed = [];
+  for (const cell of shuffled) {
+    if (placed.length >= targetCount) break;
+    const tooClose = placed.some(p => Math.max(Math.abs(p.x - cell.x), Math.abs(p.y - cell.y)) < minSpacing);
+    if (tooClose) continue;
+    placeDecorationTile(cell.x, cell.y, weightedPick(rng, table));
+    placed.push(cell);
+  }
+  return placed.length;
+}
+
+// Só usado pelo Vilarejo: células de grama fora de qualquer construção (mesmo
+// baseFillTileId do preset) e sem parede na mesma célula (evita planta "grudada"
+// na parede externa de uma casa), excluindo a margem de 1 tile da borda.
+function collectOutdoorCells(baseFillTileId) {
+  const cells = [];
+  for (let y = 1; y < CONFIG.mapHeight - 1; y++) {
+    for (let x = 1; x < CONFIG.mapWidth - 1; x++) {
+      const idx = getIndexFromCoords(x, y);
+      if (state.layers.ground[idx] === baseFillTileId && state.layers.walls[idx] === 0) cells.push({ x, y });
+    }
+  }
+  return cells;
+}
+
+function buildScenarioConfirmMessage(preset) {
+  return `Gerar cenário (${preset.label}) substitui as camadas Chão e Paredes do mapa atual e adiciona decorações na camada Objetos (objetos já existentes não são removidos nem alterados). Continuar?`;
+}
+
+// Orquestrador único: guard de permissão, histórico, terreno, decorações, render e sync
+// — tudo num único passo de undo e num único ciclo de sincronização multiplayer.
+function generateScenario(options) {
+  if (!Room.canEditLayers()) return;
+  const preset = SCENARIO_TYPES[options.scenarioType];
+  if (!preset) return;
+
+  const rng = seededRng(options.seed); // uma instância só: terreno e decorações vêm do mesmo fluxo
+
+  saveHistory();
+  state.layers.ground = new Array(CONFIG.mapWidth * CONFIG.mapHeight).fill(0);
+  state.layers.walls = new Array(CONFIG.mapWidth * CONFIG.mapHeight).fill(0);
+  state.openDoors.clear();
+
+  let toastMessage, toastType = 'success';
+
+  if (preset.strategy === 'rooms') {
+    if (preset.baseFillTileId !== 0) state.layers.ground.fill(preset.baseFillTileId);
+
+    const { rooms } = generateRoomsLayout({ ...options, structureNounPlural: preset.structureNounPlural }, rng);
+
+    let decoCount = placeStructureDecorations(rooms, preset.decorations, rng);
+    if (preset.decorations.scatter) {
+      const outdoorCells = collectOutdoorCells(preset.baseFillTileId);
+      decoCount += scatterDecorations(
+        outdoorCells,
+        [{ tileId: preset.decorations.scatter.tileId, weight: 1 }],
+        rng,
+        preset.decorations.scatter
+      );
+    }
+    const noun = rooms.length === 1 ? preset.structureNoun : preset.structureNounPlural;
+    toastMessage = `Cenário pronto (${preset.label}): ${rooms.length} ${noun}, ${decoCount} decoraç${decoCount === 1 ? 'ão' : 'ões'}.`;
+
+  } else { // 'cave'
+    const { floorCells } = generateCaveLayout(options, rng);
+    if (floorCells.length === 0) {
+      toastMessage = 'Não foi possível gerar uma caverna conectada com esses parâmetros — tente outro seed ou ajuste o preenchimento.';
+      toastType = 'error';
+    } else {
+      const decoCount = scatterDecorations(floorCells, preset.decorations.table, rng, preset.decorations);
+      toastMessage = `Cenário pronto (${preset.label}): ${floorCells.length} células de piso, ${decoCount} decoraç${decoCount === 1 ? 'ão' : 'ões'}.`;
     }
   }
 
   render();
   Room.syncLayers();
   Room.syncDoorsReset();
+  toast(toastMessage, toastType);
 }
 
 // ================= SIDEBAR REDIMENSIONÁVEL =================
@@ -1036,33 +1348,66 @@ function initCombatPanel() {
   renderCombatPanel();
 }
 
-function initGeneratorPanel() {
-  const roomFloorSelect = document.getElementById('genRoomFloorSelect');
-  const corridorFloorSelect = document.getElementById('genCorridorFloorSelect');
+function initScenarioPanel() {
+  const structureFloorSelect = document.getElementById('genStructureFloorSelect');
+  const pathFloorSelect = document.getElementById('genPathFloorSelect');
+  const caveFloorSelect = document.getElementById('genCaveFloorSelect');
   const terrainOptions = CONFIG.tileCategories['🌿 Terreno']
     .filter(t => t.id !== 0)
     .map(t => `<option value="${t.id}">${t.name}</option>`)
     .join('');
-  roomFloorSelect.innerHTML = terrainOptions;
-  corridorFloorSelect.innerHTML = terrainOptions;
-  roomFloorSelect.value = 3; // Pedra
-  corridorFloorSelect.value = 2; // Terra
+  [structureFloorSelect, pathFloorSelect, caveFloorSelect].forEach(sel => { sel.innerHTML = terrainOptions; });
 
-  document.getElementById('generateDungeonBtn').onclick = async () => {
-    const proceed = await confirmDialog(
-      'Gerar uma dungeon substitui as camadas Chão e Paredes do mapa atual (Objetos não são alterados). Continuar?',
-      { confirmLabel: 'Gerar', danger: true }
-    );
+  const typeSelect = document.getElementById('genScenarioTypeSelect');
+  const roomsParams = document.getElementById('genRoomsParams');
+  const caveParams = document.getElementById('genCaveParams');
+
+  const applyFloorDefaultsForType = (type) => {
+    const preset = SCENARIO_TYPES[type];
+    if (preset.strategy === 'rooms') {
+      structureFloorSelect.value = preset.defaultStructureFloorId;
+      pathFloorSelect.value = preset.defaultPathFloorId;
+    } else {
+      caveFloorSelect.value = preset.defaultCaveFloorId;
+    }
+  };
+
+  const updateVisibleParams = () => {
+    const preset = SCENARIO_TYPES[typeSelect.value];
+    roomsParams.classList.toggle('hidden', preset.strategy !== 'rooms');
+    caveParams.classList.toggle('hidden', preset.strategy !== 'cave');
+  };
+
+  typeSelect.onchange = () => { updateVisibleParams(); applyFloorDefaultsForType(typeSelect.value); };
+  applyFloorDefaultsForType(typeSelect.value); // estado inicial = Masmorra
+  updateVisibleParams();
+
+  document.getElementById('generateScenarioBtn').onclick = async () => {
+    const type = typeSelect.value;
+    const preset = SCENARIO_TYPES[type];
+    const proceed = await confirmDialog(buildScenarioConfirmMessage(preset), { confirmLabel: 'Gerar', danger: true });
     if (!proceed) return;
 
-    generateDungeon({
-      roomCount: parseInt(document.getElementById('genRoomCountInput').value, 10) || 8,
-      minSize: parseInt(document.getElementById('genMinSizeInput').value, 10) || 3,
-      maxSize: parseInt(document.getElementById('genMaxSizeInput').value, 10) || 7,
-      seed: document.getElementById('genSeedInput').value.trim(),
-      floorRoomTileId: parseInt(roomFloorSelect.value, 10),
-      floorCorridorTileId: parseInt(corridorFloorSelect.value, 10)
-    });
+    const seed = document.getElementById('genSeedInput').value.trim();
+    if (preset.strategy === 'rooms') {
+      generateScenario({
+        scenarioType: type,
+        seed,
+        roomCount: parseInt(document.getElementById('genRoomCountInput').value, 10) || 8,
+        minSize: parseInt(document.getElementById('genMinSizeInput').value, 10) || 3,
+        maxSize: parseInt(document.getElementById('genMaxSizeInput').value, 10) || 7,
+        floorStructureTileId: parseInt(structureFloorSelect.value, 10),
+        floorPathTileId: parseInt(pathFloorSelect.value, 10)
+      });
+    } else {
+      generateScenario({
+        scenarioType: type,
+        seed,
+        fillProbability: (parseInt(document.getElementById('genFillProbInput').value, 10) || 45) / 100,
+        iterations: parseInt(document.getElementById('genIterationsInput').value, 10) || 4,
+        floorCaveTileId: parseInt(caveFloorSelect.value, 10)
+      });
+    }
   };
 }
 
@@ -1208,6 +1553,41 @@ function updateMapSizeInputs() {
   if (heightInput) heightInput.value = CONFIG.mapHeight;
 }
 
+// Chamado por Room.leave() quando quem sai é um Jogador: o mapa da sala (que pode
+// conter segredos do Mestre, ex: salas ainda não exploradas) nunca deveria continuar
+// acessível/exportável depois de sair — reseta o editor local pra um mapa em branco
+// no tamanho padrão, como se o app tivesse acabado de abrir. O Mestre saindo/fechando
+// a sala NÃO passa por aqui: o mapa local dele é o que ele mesmo criou.
+function resetLocalMapState() {
+  CONFIG.mapWidth = 24;
+  CONFIG.mapHeight = 18;
+  canvas.width = CONFIG.mapWidth * CONFIG.tileSize;
+  canvas.height = CONFIG.mapHeight * CONFIG.tileSize;
+  applyCanvasZoom();
+
+  state.layers.ground = new Array(CONFIG.mapWidth * CONFIG.mapHeight).fill(0);
+  state.layers.walls = new Array(CONFIG.mapWidth * CONFIG.mapHeight).fill(0);
+  state.objects = [];
+  state.layerVisibility = { ground: true, walls: true, objects: true };
+  state.openDoors.clear();
+  state.history = [];
+  state.selectedObjectIds.clear();
+  state.rangeOverlay = null;
+  state.isDragging = false;
+  state.draggedObjectIndex = null;
+  viewMode.selectedObject = null;
+  viewMode.hoveredObject = null;
+
+  combatSystem.active = false;
+  combatSystem.round = 1;
+  combatSystem.order = [];
+  combatSystem.currentIndex = 0;
+
+  updateMapSizeInputs();
+  renderCombatPanel();
+  render();
+}
+
 // ================= SISTEMA DE PINCEL E BALDE (CORRIGIDO) =================
 function initCanvasEvents() {
   canvas.oncontextmenu = (e) => e.preventDefault();
@@ -1276,10 +1656,10 @@ function initCanvasEvents() {
       if (e.button === 0) {
         if (viewMode.toggleDoorAt(pos.x, pos.y)) return;
         if (viewMode.selectObject(pos.x, pos.y)) {
-          // Só Molduras (fichas) podem ser arrastadas em Modo Visualização — objetos
-          // soltos de decoração continuam só clicáveis, sem risco de mexer no cenário.
+          // Moldura (ficha) exige ser dono; objeto solto de decoração (sem ficha) é
+          // livre pra qualquer Jogador arrastar — Room.canMoveObject decide os dois casos.
           const obj = state.objects[viewMode.selectedObject];
-          if (obj.type === 'frame' && Room.canMoveObject(obj)) {
+          if (Room.canMoveObject(obj)) {
             saveHistory();
             state.isDragging = true;
             state.draggedObjectIndex = viewMode.selectedObject;
@@ -1671,16 +2051,20 @@ function getObjectAtPosition(x, y) {
 // finalmente saísse do outro lado). Passo bem menor que um tile pra não pular
 // uma parede fina de 1 tile de largura mesmo num arraste rápido.
 const WALL_SWEEP_STEP = CONFIG.tileSize / 8;
-function sweepAxisToTarget(current, target, otherAxisPos, w, h, axis) {
+// excludeId: quando informado, também bloqueia contra a caixa de qualquer outra
+// Moldura no mapa (colisão entre tokens) — usado só pro objeto arrastado ser uma
+// ficha; objetos de decoração e o passe de parede puro não passam esse parâmetro.
+function sweepAxisToTarget(current, target, otherAxisPos, w, h, axis, excludeId) {
   if (target === current) return current;
   const dir = target > current ? 1 : -1;
   let pos = current;
   while (Math.abs(target - pos) > 0.01) {
     const step = Math.min(WALL_SWEEP_STEP, Math.abs(target - pos));
     const next = pos + dir * step;
-    const blocked = axis === 'x'
-      ? isBlockedAt(next, otherAxisPos, w, h)
-      : isBlockedAt(otherAxisPos, next, w, h);
+    const x = axis === 'x' ? next : otherAxisPos;
+    const y = axis === 'x' ? otherAxisPos : next;
+    const blocked = isBlockedAt(x, y, w, h) ||
+      (excludeId !== undefined && isBlockedByOtherToken(x, y, w, h, excludeId));
     if (blocked) break;
     pos = next;
   }
@@ -1701,9 +2085,12 @@ function moveDraggedObject(e) {
   // Colisão com paredes só no Modo Visualização (jogo) — no editor o mestre continua
   // livre pra posicionar qualquer objeto em qualquer tile. Eixos varridos separado
   // pra "deslizar" ao longo de uma parede em vez de travar de vez na diagonal.
+  // Colisão entre tokens (fichas) vale pra todo mundo, Mestre incluso, mas só entre
+  // fichas — objeto de decoração sem ficha nunca bloqueia nem é bloqueado.
   if (viewMode.active) {
-    obj.x = sweepAxisToTarget(obj.x, newX, obj.y, obj.w, obj.h, 'x');
-    obj.y = sweepAxisToTarget(obj.y, newY, obj.x, obj.w, obj.h, 'y');
+    const excludeId = obj.type === 'frame' ? obj.id : undefined;
+    obj.x = sweepAxisToTarget(obj.x, newX, obj.y, obj.w, obj.h, 'x', excludeId);
+    obj.y = sweepAxisToTarget(obj.y, newY, obj.x, obj.w, obj.h, 'y', excludeId);
   } else {
     obj.x = newX;
     obj.y = newY;
@@ -4153,7 +4540,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initTools();
   initButtons();
   initCombatPanel();
-  initGeneratorPanel();
+  initScenarioPanel();
   initShortcuts();
   initCanvasEvents();
   

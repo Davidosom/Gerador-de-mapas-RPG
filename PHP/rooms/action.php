@@ -65,7 +65,10 @@ $result = withRoomLock($code, function ($room) use ($headers, $type, $payload, &
       $idx = $id ? $findObjectIndex($id) : -1;
       if ($idx === -1) { $errorOut = 'not_found'; $statusOut = 404; return null; }
       $owned = $player && in_array($id, $player['ownedObjectIds'] ?? [], true);
-      if (!$isMestre && !$owned) { $errorOut = 'forbidden'; $statusOut = 403; return null; }
+      // Objeto sem ficha (type !== 'frame') é livre pra qualquer Jogador mexer,
+      // mesmo sem ownership — só ficha exige ser dono.
+      $isFrame = ($room['objects'][$idx]['type'] ?? null) === 'frame';
+      if (!$isMestre && !$owned && $isFrame) { $errorOut = 'forbidden'; $statusOut = 403; return null; }
       if (!isset($payload['x']) || !isset($payload['y'])) { $errorOut = 'invalid_payload'; $statusOut = 400; return null; }
       $room['objects'][$idx]['x'] = (float) $payload['x'];
       $room['objects'][$idx]['y'] = (float) $payload['y'];
@@ -83,7 +86,8 @@ $result = withRoomLock($code, function ($room) use ($headers, $type, $payload, &
         $idx = $id ? $findObjectIndex($id) : -1;
         if ($idx === -1) continue;
         $owned = $player && in_array($id, $player['ownedObjectIds'] ?? [], true);
-        if (!$isMestre && !$owned) continue;
+        $isFrame = ($room['objects'][$idx]['type'] ?? null) === 'frame';
+        if (!$isMestre && !$owned && $isFrame) continue;
         if (!isset($mv['x']) || !isset($mv['y'])) continue;
         $room['objects'][$idx]['x'] = (float) $mv['x'];
         $room['objects'][$idx]['y'] = (float) $mv['y'];
@@ -124,6 +128,19 @@ $result = withRoomLock($code, function ($room) use ($headers, $type, $payload, &
       $wallIndex = $payload['wallIndex'] ?? null;
       if (!is_numeric($wallIndex)) { $errorOut = 'invalid_payload'; $statusOut = 400; return null; }
       $wallIndex = (int) $wallIndex;
+
+      // Jogador só abre porta a até 1 bloco da própria ficha; Mestre não tem
+      // restrição. Checagem autoritativa — o cliente já filtra isso, mas o servidor
+      // nunca confia só nisso.
+      if (!$isMestre) {
+        $mapWidth = $room['mapWidth'] ?: 1;
+        $doorGX = $wallIndex % $mapWidth;
+        $doorGY = intdiv($wallIndex, $mapWidth);
+        if (!playerNearGridCell($room, $player, $doorGX, $doorGY)) {
+          $errorOut = 'too_far'; $statusOut = 403; return null;
+        }
+      }
+
       $pos = array_search($wallIndex, $room['openDoors'], true);
       if ($pos === false) $room['openDoors'][] = $wallIndex;
       else array_splice($room['openDoors'], $pos, 1);
@@ -131,7 +148,7 @@ $result = withRoomLock($code, function ($room) use ($headers, $type, $payload, &
     }
 
     case 'setDoors':
-      // Usado depois de gerar dungeon / redimensionar: substitui a lista inteira
+      // Usado depois de gerar cenário / redimensionar: substitui a lista inteira
       // (tipicamente esvaziando, já que os índices antigos perdem sentido).
       if (!$isMestre) { $errorOut = 'forbidden'; $statusOut = 403; return null; }
       $room['openDoors'] = is_array($payload['openDoors'] ?? null) ? array_values($payload['openDoors']) : [];
@@ -169,12 +186,26 @@ $result = withRoomLock($code, function ($room) use ($headers, $type, $payload, &
       // Autor sempre resolvido a partir da autenticação (nunca do texto mandado pelo
       // cliente) — evita um Jogador se passar por "Mestre" ou por outro Jogador.
       $author = $isMestre ? '🎲 Mestre' : mb_substr((string) ($player['displayName'] ?? 'Jogador'), 0, 60);
+      $fromId = $isMestre ? 'GM' : $player['id'];
+
+      // Destinatário opcional (sussurro): 'GM' ou o id de um Jogador presente na sala.
+      // Ausente/inválido = mensagem pública, visível pra sala inteira.
+      $to = $msg['to'] ?? null;
+      if ($to !== null) {
+        if (!is_string($to)) { $errorOut = 'invalid_payload'; $statusOut = 400; return null; }
+        $validTo = $to === 'GM' || in_array($to, array_column($room['players'], 'id'), true);
+        if (!$validTo) { $errorOut = 'invalid_recipient'; $statusOut = 400; return null; }
+        // Sussurro pro próprio remetente não faz sentido — trata como público.
+        if ($to === $fromId) $to = null;
+      }
 
       $entry = [
         // Prefere o id gerado no cliente (permite ao remetente identificar seu
         // próprio eco otimista e não duplicar a mensagem quando ela volta pelo poll).
         'id' => (is_string($msg['id'] ?? null) && $msg['id'] !== '') ? $msg['id'] : generateEntityId('msg'),
         'author' => $author,
+        'fromId' => $fromId,
+        'to' => $to,
         'text' => $text,
         'isRoll' => !empty($msg['isRoll']),
         'ts' => (int) round(microtime(true) * 1000)

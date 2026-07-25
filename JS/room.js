@@ -17,6 +17,7 @@ const Room = {
   players: [],           // último snapshot conhecido dos jogadores (painel do Mestre)
   ownedObjectIds: [],     // (papel 'player')
   permissions: {},        // (papel 'player')
+  _playerLayerVisibilityApplied: false,
 
   _pollHandle: null,
   _layersSyncTimer: null,
@@ -39,6 +40,10 @@ const Room = {
     return !!obj && !!obj.id && this.ownedObjectIds.includes(obj.id);
   },
   canMoveObject(obj) {
+    // Objeto sem ficha (decoração: baú, mesa, barril...) é livre pra qualquer
+    // Jogador mexer, mesmo sem ownership atribuída — só fichas (type === 'frame')
+    // exigem ser dono.
+    if (this.active && this.role === 'player' && obj && obj.type !== 'frame') return true;
     return this.isOwner(obj);
   },
   canEditAttributes(obj) {
@@ -268,6 +273,7 @@ const Room = {
 
   leave() {
     const wasActive = this.active;
+    const wasPlayer = this.role === 'player';
     this.stopPolling();
     this.active = false;
     this.role = null;
@@ -279,8 +285,12 @@ const Room = {
     this.players = [];
     this.ownedObjectIds = [];
     this.permissions = {};
+    this._playerLayerVisibilityApplied = false;
     this._clearSession();
     this._onExitRoom();
+    // Jogador não fica com cópia do mapa da sala depois de sair (pode ter segredos
+    // do Mestre); o Mestre continua com o mapa local que ele mesmo criou.
+    if (wasPlayer) resetLocalMapState();
     if (wasActive) toast('Você saiu da sala.', 'info');
   },
 
@@ -324,6 +334,7 @@ const Room = {
     const versionChanged = data.version !== this.version;
     this.version = data.version;
     this.players = data.players || [];
+    if (typeof Chat !== 'undefined') Chat.refreshRecipients();
 
     if (data.you) {
       if (data.you.role === 'player') {
@@ -346,7 +357,16 @@ const Room = {
 
     state.layers.ground = data.layers.ground;
     state.layers.walls = data.layers.walls;
-    if (data.layerVisibility) state.layerVisibility = data.layerVisibility;
+    // Visibilidade de camada é preferência de cada Jogador (ver toggleLayerVisibility/
+    // Room.syncLayers, que só sincroniza pro servidor quando role === 'mestre') — só
+    // aplicamos o valor do servidor uma vez, na entrada da sala; depois disso, um poll
+    // disparado por QUALQUER edição de outra pessoa não deve reverter o que o Jogador
+    // já escolheu mostrar/ocultar na própria tela. Mestre continua sempre em sincronia
+    // com o próprio valor (é a fonte dele).
+    if (data.layerVisibility && (this.role !== 'player' || !this._playerLayerVisibilityApplied)) {
+      state.layerVisibility = data.layerVisibility;
+      this._playerLayerVisibilityApplied = true;
+    }
     state.openDoors = new Set(data.openDoors || []);
 
     const draggedId = (state.isDragging && state.draggedObjectIndex !== null && state.objects[state.draggedObjectIndex])
@@ -404,10 +424,12 @@ const Room = {
       const viewBtn = document.getElementById('viewModeBtn');
       if (viewBtn) viewBtn.style.display = 'none';
       startViewModeAnimation();
+      this._forceChatOpen();
     } else {
       this._renderPlayersPanel();
     }
 
+    if (typeof Chat !== 'undefined') Chat.refreshRecipients();
     this.startPolling();
     render();
   },
@@ -419,6 +441,25 @@ const Room = {
     document.getElementById('playersPanelSection')?.remove();
     const viewBtn = document.getElementById('viewModeBtn');
     if (viewBtn) viewBtn.style.display = '';
+    if (typeof Chat !== 'undefined') Chat.refreshRecipients();
+  },
+
+  // Garante que o chat abra visível pro Jogador, mesmo que 'chat' esteja marcado
+  // como painel colapsado em localStorage['rpgEditor_collapsedPanels'] de uma
+  // sessão anterior no mesmo navegador (initExpandablePanels em app.js já rodou
+  // e aplicou esse estado antes da sala existir).
+  _forceChatOpen() {
+    const chatSidebar = document.getElementById('chatSidebar');
+    const chatPanel = document.querySelector('.panel[data-panel="chat"]');
+    chatSidebar?.classList.remove('collapsed');
+    chatPanel?.classList.remove('collapsed');
+    try {
+      const stored = new Set(JSON.parse(localStorage.getItem('rpgEditor_collapsedPanels') || '[]'));
+      if (stored.has('chat')) {
+        stored.delete('chat');
+        localStorage.setItem('rpgEditor_collapsedPanels', JSON.stringify([...stored]));
+      }
+    } catch (e) { /* ignora */ }
   },
 
   // ---------------- UI: modal criar/entrar ----------------
