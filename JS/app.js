@@ -15,6 +15,11 @@ const CONFIG = {
       { id: 6, name: 'Metal', texture: 'texture-metal', emoji: null, color: '#7a7a8a' },
       { id: 7, name: 'Água', texture: 'texture-water', emoji: null, color: '#4a90a4' },
       { id: 8, name: 'Lava', texture: 'texture-lava', emoji: null, color: '#c41e3a', lightRadius: 3 },
+      { id: 9, name: 'Pedra rústica', texture: 'texture-stone-rough', emoji: null, color: '#8b8a83' },
+      { id: 10, name: 'Azulejo', texture: 'texture-stone-tiles', emoji: null, color: '#9ea49c' },
+      { id: 11, name: 'Grama seca', texture: 'texture-grass-dry', emoji: null, color: '#7d8a4d' },
+      { id: 12, name: 'Mosaico', texture: 'texture-mosaic', emoji: null, color: '#87938a' },
+      { id: 13, name: 'Ardósia', texture: 'texture-slate', emoji: null, color: '#5d646d' },
     ],
     '🧱 Estruturas': [
       { id: 20, name: 'Parede', texture: 'texture-stone', emoji: null, color: '#4a3728' },
@@ -2953,6 +2958,111 @@ function drawTexture(c, x, y, tex, col) {
     c.fillStyle = 'rgba(0, 0, 0, 0.15)';
     c.fillRect(x + 2, y + ts - 3, ts - 2, 1);
     c.fillRect(x + ts - 3, y + 2, 1, ts - 2);
+  }
+  // --- PEDRA RÚSTICA (novo piso) ---
+  else if (tex === 'texture-stone-rough') {
+    c.fillStyle = col;
+    c.fillRect(x, y, ts, ts);
+
+    c.fillStyle = 'rgba(40, 38, 34, 0.28)';
+    const roughBlocks = [
+      [3, 5, 7, 5], [15, 9, 9, 5], [22, 4, 6, 4], [8, 18, 10, 6],
+      [19, 20, 8, 5], [4, 26, 12, 4], [23, 13, 5, 4]
+    ];
+    roughBlocks.forEach(([bx, by, bw, bh]) => c.fillRect(x + bx, y + by, bw, bh));
+
+    c.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    c.fillRect(x + 4, y + 3, 4, 2);
+    c.fillRect(x + 16, y + 12, 5, 2);
+    c.fillRect(x + 9, y + 22, 6, 2);
+
+    c.strokeStyle = 'rgba(0, 0, 0, 0.18)';
+    c.lineWidth = 1;
+    c.beginPath();
+    c.moveTo(x + 6, y + 8); c.lineTo(x + 12, y + 12); c.lineTo(x + 18, y + 7); c.moveTo(x + 14, y + 20); c.lineTo(x + 25, y + 17); c.lineTo(x + 20, y + 28);
+    c.stroke();
+  }
+  // --- AZULEJO / PAVIMENTAÇÃO ---
+  else if (tex === 'texture-stone-tiles') {
+    c.fillStyle = col;
+    c.fillRect(x, y, ts, ts);
+
+    c.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    c.lineWidth = 1.2;
+    for (let yy = 0; yy < ts; yy += 8) {
+      c.beginPath();
+      c.moveTo(x, y + yy);
+      c.lineTo(x + ts, y + yy);
+      c.stroke();
+    }
+    for (let xx = 0; xx < ts; xx += 8) {
+      c.beginPath();
+      c.moveTo(x + xx, y);
+      c.lineTo(x + xx, y + ts);
+      c.stroke();
+    }
+
+    c.fillStyle = 'rgba(0, 0, 0, 0.08)';
+    for (let yy = 4; yy < ts; yy += 16) {
+      for (let xx = 4; xx < ts; xx += 16) {
+        c.fillRect(x + xx, y + yy, 2, 2);
+      }
+    }
+  }
+  // --- GRAMA SECA ---
+  else if (tex === 'texture-grass-dry') {
+    c.fillStyle = '#7a8b4d';
+    c.fillRect(x, y, ts, ts);
+    c.fillStyle = 'rgba(110, 92, 38, 0.45)';
+    for (let i = 0; i < 12; i++) {
+      const dx = x + ((i * 9 + 3) % ts);
+      const dy = y + ((i * 11 + 6) % ts);
+      c.fillRect(dx, dy, 1, 6);
+    }
+    c.fillStyle = 'rgba(136, 118, 58, 0.28)';
+    c.fillRect(x + 6, y + 10, 3, 2);
+    c.fillRect(x + 17, y + 22, 4, 2);
+    c.fillRect(x + 24, y + 8, 3, 2);
+  }
+  // --- MOSAICO ---
+  else if (tex === 'texture-mosaic') {
+    c.fillStyle = col;
+    c.fillRect(x, y, ts, ts);
+
+    c.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    for (let yy = 0; yy < ts; yy += 8) {
+      for (let xx = 0; xx < ts; xx += 8) {
+        const xo = (xx + yy / 8) % 16 === 0 ? 2 : 0;
+        c.fillRect(x + xx + xo, y + yy, 4, 4);
+      }
+    }
+    c.strokeStyle = 'rgba(0, 0, 0, 0.15)';
+    c.lineWidth = 1;
+    for (let yy = 0; yy < ts; yy += 8) {
+      c.beginPath();
+      c.moveTo(x, y + yy + 4);
+      c.lineTo(x + ts, y + yy + 4);
+      c.stroke();
+    }
+  }
+  // --- ARDÓSIA ---
+  else if (tex === 'texture-slate') {
+    c.fillStyle = col;
+    c.fillRect(x, y, ts, ts);
+
+    c.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    c.fillRect(x + 3, y + 3, ts - 6, 2);
+    c.fillRect(x + 5, y + 18, ts - 10, 2);
+    c.fillRect(x + 10, y + 28, ts - 16, 2);
+
+    c.strokeStyle = 'rgba(0, 0, 0, 0.16)';
+    c.lineWidth = 1;
+    c.beginPath();
+    c.moveTo(x + 6, y + 10); c.lineTo(x + 12, y + 16); c.lineTo(x + 20, y + 12); c.lineTo(x + 26, y + 20); c.lineTo(x + 16, y + 28);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(x + 10, y + 5); c.lineTo(x + 18, y + 5); c.lineTo(x + 22, y + 10);
+    c.stroke();
   }
   // --- MADEIRA (melhorada) ---
   else if (tex === 'texture-wood') {
