@@ -16,6 +16,7 @@
       <button id="importJsonBtn">📂 JSON</button>
       <button id="exportPngBtn">🖼️ PNG</button>
       <button id="importPngBtn">📷 PNG</button>
+      <button id="asciiModalBtn" title="Importar / Exportar em ASCII">🔤 ASCII</button>
       <span class="toolbar-divider"></span>
       <button id="zoomInBtn">➕ Zoom</button>
       <button id="zoomOutBtn">➖ Zoom</button>
@@ -152,7 +153,7 @@
             <button class="tool" data-tool="aoe" title="Área de Efeito (A) — clique e arraste no mapa pra prever o raio de uma magia/item (em metros). Fica visível até você desenhar outra, apertar Esc ou clicar com o botão direito. Funciona também no Modo Visualização."><span class="tool-icon">🎯</span><span class="tool-label">Área de Efeito</span><span class="tool-key">A</span></button>
           </div>
           <div class="ruler-settings">
-            <label title="Metros por bloco (escala usada pela Régua e pela Área de Efeito)">
+            <label title="Metros por bloco (escala usada pela Régua, Área de Efeito e ferramentas de desenho Linha e Retângulo)">
               <span class="ruler-settings-label">Metros por bloco:</span>
               <input type="number" id="metersPerTileInput" min="0.1" step="0.1" value="1.5">
             </label>
@@ -184,6 +185,7 @@
   </main>
 
   <script src="JS/app.js"></script>
+  <script src="JS/ascii.js"></script>
   <script src="JS/room.js"></script>
   <script src="JS/chat.js"></script>
 </body>

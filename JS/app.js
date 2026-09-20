@@ -1333,6 +1333,8 @@ function initButtons() {
   document.getElementById('importJsonInput').onchange = importMapJSON;
   document.getElementById('exportPngBtn').onclick = exportAsPNG;
   document.getElementById('importPngBtn').onclick = showPngImportModal;
+  const asciiModalBtn = document.getElementById('asciiModalBtn');
+  if (asciiModalBtn) asciiModalBtn.onclick = () => asciiSystem.showModal();
   document.getElementById('zoomInBtn').onclick = () => zoom(1.1);
   document.getElementById('zoomOutBtn').onclick = () => zoom(0.9);
   document.getElementById('zoomResetBtn').onclick = resetZoom;
@@ -2313,12 +2315,99 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 function renderShapePreview() {
+  if (!state.shapeStart || !state.shapeEnd) return;
+
   const cells = getShapeCells();
+  ctx.save();
+
+  // Preenche os blocos da prévia com destaque e borda nítida
   ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+  ctx.lineWidth = 1;
   cells.forEach(({ x, y }) => {
     if (x < 0 || x >= CONFIG.mapWidth || y < 0 || y >= CONFIG.mapHeight) return;
-    ctx.fillRect(x * CONFIG.tileSize, y * CONFIG.tileSize, CONFIG.tileSize, CONFIG.tileSize);
+    const px = x * CONFIG.tileSize;
+    const py = y * CONFIG.tileSize;
+    ctx.fillRect(px, py, CONFIG.tileSize, CONFIG.tileSize);
+    ctx.strokeRect(px + 0.5, py + 0.5, CONFIG.tileSize - 1, CONFIG.tileSize - 1);
   });
+
+  const { x: x0, y: y0 } = state.shapeStart;
+  const { x: x1, y: y1 } = state.shapeEnd;
+
+  let label = '';
+  let badgeX = 0;
+  let badgeY = 0;
+
+  if (state.currentTool === 'rect') {
+    const w = Math.abs(x1 - x0) + 1;
+    const h = Math.abs(y1 - y0) + 1;
+    const wM = (w * state.metersPerTile).toFixed(1);
+    const hM = (h * state.metersPerTile).toFixed(1);
+    label = `${w} × ${h} un. (${wM} × ${hM} m)`;
+
+    const minX = Math.min(x0, x1) * CONFIG.tileSize;
+    const maxX = (Math.max(x0, x1) + 1) * CONFIG.tileSize;
+    const minY = Math.min(y0, y1) * CONFIG.tileSize;
+    const maxY = (Math.max(y0, y1) + 1) * CONFIG.tileSize;
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    badgeX = centerX;
+    badgeY = minY - 16;
+    if (badgeY < 14) badgeY = maxY + 16;
+    if (badgeY > canvas.height - 14) badgeY = centerY;
+  } else {
+    // Linha
+    const count = cells.length;
+    const meters = (count * state.metersPerTile).toFixed(1);
+    label = `${count} un. (${meters} m)`;
+
+    const px0 = (x0 + 0.5) * CONFIG.tileSize;
+    const py0 = (y0 + 0.5) * CONFIG.tileSize;
+    const px1 = (x1 + 0.5) * CONFIG.tileSize;
+    const py1 = (y1 + 0.5) * CONFIG.tileSize;
+    const midX = (px0 + px1) / 2;
+    const midY = (py0 + py1) / 2;
+
+    // Marcadores discretos nos pontos de início e fim
+    ctx.fillStyle = 'rgba(100, 200, 255, 0.9)';
+    ctx.beginPath(); ctx.arc(px0, py0, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(px1, py1, 3, 0, Math.PI * 2); ctx.fill();
+
+    const dx = Math.abs(x1 - x0);
+    const dy = Math.abs(y1 - y0);
+    if (dx >= dy) {
+      badgeX = midX;
+      badgeY = (midY - 18 >= 14) ? (midY - 18) : (midY + 18);
+    } else {
+      ctx.font = 'bold 13px system-ui';
+      const twEst = ctx.measureText(label).width;
+      badgeY = midY;
+      badgeX = (midX + twEst / 2 + 16 <= canvas.width - 10) ? (midX + twEst / 2 + 16) : (midX - twEst / 2 - 16);
+    }
+  }
+
+  // Desenha o badge com as medidas
+  ctx.font = 'bold 13px system-ui';
+  const tw = ctx.measureText(label).width;
+  const bw = tw + 16;
+  const bh = 24;
+
+  badgeX = Math.max(bw / 2 + 4, Math.min(canvas.width - bw / 2 - 4, badgeX));
+  badgeY = Math.max(bh / 2 + 4, Math.min(canvas.height - bh / 2 - 4, badgeY));
+
+  ctx.fillStyle = 'rgba(15, 20, 30, 0.92)';
+  ctx.strokeStyle = 'rgba(100, 200, 255, 0.75)';
+  ctx.lineWidth = 1.2;
+  roundRect(ctx, badgeX - bw / 2, badgeY - bh / 2, bw, bh, 6);
+
+  ctx.fillStyle = '#bde4ff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, badgeX, badgeY);
+
+  ctx.restore();
 }
 
 // Overlay de alcance de movimento (distância de Chebyshev, sem considerar paredes)
@@ -2635,6 +2724,48 @@ function renderMarqueeSelection() {
   ctx.setLineDash([4, 3]);
   ctx.strokeRect(x, y, w, h);
   ctx.setLineDash([]);
+
+  // Mostra o tamanho e quantidade de objetos na seleção em retângulo
+  if (w > 8 || h > 8) {
+    const wTiles = (w / CONFIG.tileSize).toFixed(1);
+    const hTiles = (h / CONFIG.tileSize).toFixed(1);
+    const wM = (w / CONFIG.tileSize * state.metersPerTile).toFixed(1);
+    const hM = (h / CONFIG.tileSize * state.metersPerTile).toFixed(1);
+
+    let count = 0;
+    state.objects.forEach(obj => {
+      if (!Room.canMoveObject(obj)) return;
+      const intersects = obj.x < x + w && obj.x + obj.w > x && obj.y < y + h && obj.y + obj.h > y;
+      if (intersects) count++;
+    });
+
+    const label = count > 0
+      ? `${wTiles} × ${hTiles} un. (${count} obj.)`
+      : `${wTiles} × ${hTiles} un. (${wM} × ${hM} m)`;
+
+    ctx.save();
+    ctx.font = 'bold 12px system-ui';
+    const tw = ctx.measureText(label).width;
+    const bw = tw + 14;
+    const bh = 22;
+
+    const centerX = x + w / 2;
+    let badgeY = (y - 14 >= bh / 2 + 4) ? (y - 14) : (y + h + 14);
+    if (badgeY > canvas.height - bh / 2 - 4) badgeY = y + h / 2;
+    let badgeX = Math.max(bw / 2 + 4, Math.min(canvas.width - bw / 2 - 4, centerX));
+    badgeY = Math.max(bh / 2 + 4, Math.min(canvas.height - bh / 2 - 4, badgeY));
+
+    ctx.fillStyle = 'rgba(15, 25, 35, 0.92)';
+    ctx.strokeStyle = 'rgba(0, 200, 255, 0.8)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, badgeX - bw / 2, badgeY - bh / 2, bw, bh, 5);
+
+    ctx.fillStyle = '#70d6ff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, badgeX, badgeY);
+    ctx.restore();
+  }
 }
 
 function hpBarColor(pct) {
